@@ -1,0 +1,51 @@
+[Unit]
+Description=E-Ink Calendar display service
+Documentation=https://github.com/mak3r/e-ink-calendar
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Runs as the dedicated non-sudo system user created in docs/runbook.md §4
+# (`useradd --system --shell /usr/sbin/nologin eink-calendar`, added to spi,gpio).
+# That user owns only its checkout (~/app) and ~/.config/eink-calendar/.
+User=eink-calendar
+Group=eink-calendar
+# ~/app is a symlink to the currently-deployed release (docs/runbook.md §5,
+# scripts/deploy.sh); systemd resolves it afresh on every start, so a deploy
+# that repoints the symlink takes effect on the next `systemctl restart`.
+WorkingDirectory=/home/eink-calendar/app
+# eink_calendar/config.py reads EINK_CALENDAR_CONFIG (a file path), then falls
+# back to ~/.config/eink-calendar/config.yaml. Set it explicitly so the unit
+# does not depend on HOME resolution.
+Environment=EINK_CALENDAR_CONFIG=/home/eink-calendar/.config/eink-calendar/config.yaml
+ExecStart=/home/eink-calendar/app/.venv/bin/python -m eink_calendar.app
+Restart=on-failure
+RestartSec=5
+
+# Hardening — the service needs GPIO/SPI, its checkout, and its config dir.
+# UMask=0077 is the compensating control cited by
+# eink_calendar/calendar_source/local_files.py: files the service writes
+# outside write_private_text() (e.g. data/last_render.png) must not be
+# world-readable — a render is a picture of the family's calendar.
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+# Leading "-" on the release-relative data dir: a freshly-extracted release may
+# not have it until the app (or deploy.sh) creates it, and its real path changes
+# each deploy as the ~/app symlink is repointed.
+ReadWritePaths=-/home/eink-calendar/app/data /home/eink-calendar/.config/eink-calendar
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# Device access (SPI/GPIO) is left at the default policy pending hardware
+# bring-up (#15); tightening to DevicePolicy=closed + explicit DeviceAllow
+# needs to be verified against the real Inky panel.
+
+[Install]
+WantedBy=multi-user.target
