@@ -1,19 +1,281 @@
 # Runbook
 
-<!-- Replace this placeholder with operational procedures for your project. -->
+Operational guide for the e-ink calendar: a Raspberry Pi driving a Pimoroni
+Inky Impression (Spectra-6) panel that shows a Google Calendar in Day / Week /
+Month views.
 
-## Common Operations
+This guide is generic and public — it assumes no prior context on the project.
+Replace `<owner>/<repo>` and the example paths with your own values.
 
-TODO: Document the most common operational tasks.
+> **Status:** The install steps below describe the interfaces defined in
+> issues #4, #14 and #15. Cross-check the exact flags and unit-file contents
+> against `scripts/setup_oauth.py`, `scripts/deploy.sh`,
+> `systemd/eink-calendar.service` and `SECURITY.md` once those are merged.
 
-## Troubleshooting
+---
 
-TODO: Document known failure modes and how to diagnose and resolve them.
+## 1. What you need
 
-## Emergency Procedures
+- Raspberry Pi (any model with the 40-pin header; a Pi Zero 2 W or Pi 3/4/5 is fine)
+- Pimoroni Inky Impression e-ink panel, seated on the GPIO header
+- microSD card, 8 GB or larger
+- A Google account whose calendar you want to display
+- A second computer (Mac/Linux/Windows) with a browser, used **once** for OAuth consent
 
-TODO: Document what to do when things go wrong in production.
+---
 
-## Monitoring
+## 2. Flash Raspberry Pi OS
 
-TODO: Describe what to watch and what indicates a problem.
+1. Install **Raspberry Pi OS (Bookworm)**, 64-bit, with Raspberry Pi Imager.
+2. In the Imager's advanced options set the hostname, enable SSH, and configure Wi‑Fi / locale.
+3. Boot the Pi and SSH in.
+
+## 3. Enable SPI
+
+The Inky panel talks over SPI.
+
+```bash
+sudo raspi-config nonint do_spi 0   # 0 = enable
+sudo reboot
+```
+
+After reboot, confirm `/dev/spidev0.0` exists.
+
+## 4. Create a dedicated service user
+
+The calendar runs as its own non-sudo user — never as `pi` or root.
+
+```bash
+sudo useradd --system --create-home --shell /usr/sbin/nologin eink
+sudo usermod -aG spi,gpio eink
+```
+
+## 5. Install the application
+
+Always deploy a **tagged release**, never `main` HEAD.
+
+```bash
+# pick the latest tag from https://github.com/<owner>/<repo>/releases
+VERSION=v1.0.0
+sudo -u eink -H bash -c "
+  cd ~ &&
+  curl -fsSL https://github.com/<owner>/<repo>/archive/refs/tags/${VERSION}.tar.gz | tar xz &&
+  ln -sfn <repo>-${VERSION#v} app
+"
+```
+
+Install the Pi runtime dependencies (the Pi-only set — GPIO + Inky libraries):
+
+```bash
+sudo -u eink -H bash -c "
+  cd ~/app &&
+  python3 -m venv .venv &&
+  .venv/bin/pip install -r requirements-pi.txt
+"
+```
+
+## 6. Configure
+
+Configuration and all secrets live **outside the repo checkout**, under
+`~eink/.config/eink-calendar/`.
+
+```bash
+sudo -u eink -H bash -c "
+  mkdir -p ~/.config/eink-calendar &&
+  cp ~/app/config/config.example.yaml ~/.config/eink-calendar/config.yaml
+"
+sudo -u eink -H nano ~eink/.config/eink-calendar/config.yaml
+```
+
+Set at least:
+
+- `display.driver: inky`
+- `display.resolution` — confirm against `inky.auto().resolution` during bring-up (section 11)
+- `refresh.daily_time` and `refresh.timezone` — when the daily auto-refresh runs
+- `accounts[].calendars[].color` — one of the six palette keys
+  (`black`, `white`, `red`, `yellow`, `blue`, `green`), never a raw hex value
+- `accounts[].credentials_file` / `token_file` — paths under `~/.config/eink-calendar/`
+
+## 7. Google Cloud project + OAuth client
+
+1. In the [Google Cloud console](https://console.cloud.google.com/) create a project.
+2. Enable the **Google Calendar API**.
+3. Configure the **OAuth consent screen**:
+   - User type: External
+   - **Publishing status: In production.** Do **not** leave it in *Testing* —
+     testing-mode refresh tokens expire after 7 days and the display will
+     silently stop updating.
+   - Scope: `https://www.googleapis.com/auth/calendar.readonly` only. This
+     read-only scope is permanent for this project; do not widen it.
+4. Create an **OAuth client ID** of type *Desktop app*. Download the JSON.
+5. Copy it to the Pi as the account's `credentials_file`:
+
+```bash
+sudo -u eink -H cp ~/personal_credentials.json ~eink/.config/eink-calendar/personal_credentials.json
+sudo -u eink -H chmod 600 ~eink/.config/eink-calendar/*credentials*.json
+```
+
+### Choosing the authorizing account
+
+- Enable **2‑Step Verification (2FA)** on the Google account before authorizing.
+- If the account is enrolled in Google's **Advanced Protection Program**, OAuth
+  to a self-published app may be blocked — use a different account or unenroll.
+
+## 8. Run the one-time OAuth consent
+
+This is the **only** step that needs a browser, and it is run once per account.
+`scripts/setup_oauth.py` is the only place the app ever opens a browser — the Pi
+runtime never does.
+
+Easiest path: run it on your Mac/laptop (which has a browser), then copy the
+resulting token file to the Pi.
+
+```bash
+# on a machine with a browser, in a checkout of the same release:
+pip install -r requirements-dev.txt
+python scripts/setup_oauth.py --account personal
+# follow the printed Production-status and 2FA reminders, complete consent in the browser
+```
+
+Copy the generated token to the Pi:
+
+```bash
+scp ~/.config/eink-calendar/personal_token.json eink-host:/tmp/
+ssh eink-host 'sudo -u eink -H cp /tmp/personal_token.json ~eink/.config/eink-calendar/ && sudo -u eink -H chmod 600 ~eink/.config/eink-calendar/personal_token.json && rm /tmp/personal_token.json'
+```
+
+After this, the Pi refreshes the access token silently forever using the stored
+refresh token — no further human interaction.
+
+## 9. Install the systemd service
+
+```bash
+sudo cp ~eink/app/systemd/eink-calendar.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now eink-calendar.service
+```
+
+The unit runs as the `eink` user, `Restart=on-failure`,
+`After=network-online.target`, so it comes back on its own after a reboot or a
+transient crash.
+
+Check it:
+
+```bash
+systemctl status eink-calendar.service
+journalctl -u eink-calendar.service -f
+```
+
+Within a few seconds the panel should show the default view.
+
+## 10. Deploying updates
+
+Use `scripts/deploy.sh` (git-based): it pushes the new release, pulls it on the
+Pi, reinstalls `requirements-pi.txt`, and restarts the service over SSH.
+Secrets under `~eink/.config/eink-calendar/` are **never** touched by git — they
+are synced separately, by an explicit rsync step, only when they actually
+change.
+
+To preview the current screen from your desk without anything extra running on
+the Pi (only `sshd`):
+
+```bash
+scripts/pull_preview.sh <pi-host>
+```
+
+This copies the Pi's `data/last_render.png` locally and opens it.
+
+---
+
+## 11. First-boot hardware bring-up checklist
+
+Run once on real hardware and record the results here:
+
+| Check | How | Result |
+|---|---|---|
+| Panel detected | `python3 -c "from inky.auto import auto; print(auto().resolution)"` | _fill in_ |
+| `display.resolution` in config matches the line above | edit `config.yaml` | _fill in_ |
+| Panel actually refreshes with the composited image | watch after `systemctl start` | _fill in_ |
+| Button pin map matches [Pimoroni's current pinout](https://learn.pimoroni.com/) | compare to `buttons.pin_map` | _fill in_ |
+| Button A cycles Day → Week → Month | press it | _fill in_ |
+| Button B forces a refresh | press it, watch the journal | _fill in_ |
+| Buttons C and D do nothing (no crash, no log) | press them | _fill in_ |
+| Daily auto-refresh fires at `daily_time` | set a near-future time, wait | _fill in_ |
+| Service restarts after `sudo reboot` with no prompt | reboot | _fill in_ |
+
+---
+
+## 12. Troubleshooting
+
+**Panel never updates / blank panel**
+`journalctl -u eink-calendar.service -e`. If SPI is disabled you'll see a device
+error — re-run section 3. A blank panel with a healthy log usually means the
+cache is empty and the first fetch failed; see the auth items below.
+
+**Display froze on an old image**
+By design: a failed fetch keeps the last good render rather than blanking. Check
+the journal for repeated fetch failures. The image on screen is always the last
+success; `data/last_render.png` is that same image.
+
+**"invalid_grant" / token errors in the log**
+The refresh token was revoked or expired. Most common cause: the OAuth consent
+screen is still in *Testing* (7-day expiry) — set it to *In production*
+(section 7) and re-run section 8. Otherwise the token was revoked manually
+(section 13) — re-run section 8 to reissue.
+
+**Wrong colours on events**
+Every `color` in `config.yaml` must be one of the six palette keys. The app
+rejects a raw hex value at startup with a message naming the field — check the
+journal for a config validation error.
+
+**View cycling seems to hit the network**
+It shouldn't — button A renders from cache only. If refreshes correlate with
+button A presses, file a bug against `persona/developer`.
+
+---
+
+## 13. Revoke and rotate credentials
+
+### When to revoke
+
+- The Pi, its SD card, or a backup containing `~eink/.config/eink-calendar/` is lost, sold, or disposed of
+- You suspect the token or credentials JSON leaked (committed to a repo, pasted somewhere, emailed)
+- You are decommissioning the display
+- Routine hygiene: rotate at least once a year
+
+### How to revoke
+
+1. Sign in to the Google account the display uses.
+2. Go to **Google Account → Security → Your connections to third-party apps &
+   services** (`myaccount.google.com/connections`).
+3. Select this app (the name is whatever you set on the OAuth consent screen).
+4. Choose **Delete all connections** / **Remove access**.
+
+This immediately invalidates every issued refresh token. The display will keep
+showing its last render and log `invalid_grant` on the next refresh.
+
+### How to reissue after revoking
+
+1. On the Pi, delete the dead token files:
+   ```bash
+   sudo -u eink -H rm ~eink/.config/eink-calendar/*_token.json
+   ```
+2. Re-run the one-time consent for each account (section 8) and copy the new
+   token files back to the Pi.
+3. Restart the service:
+   ```bash
+   sudo systemctl restart eink-calendar.service
+   ```
+
+### Rotating the OAuth client secret (credentials JSON)
+
+1. In the Google Cloud console, under **APIs & Services → Credentials**, delete
+   the old OAuth client ID and create a new Desktop-app client.
+2. Replace every `credentials_file` on the Pi with the new JSON (`chmod 600`).
+3. Re-run section 8 (a new client requires fresh consent).
+
+### What never needs rotating
+
+The `calendar.readonly` scope is fixed for this project. If a future change
+appears to need write access, treat that as a security review item, not a
+config tweak.
