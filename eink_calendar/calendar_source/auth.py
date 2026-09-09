@@ -16,6 +16,8 @@ from pathlib import Path
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 
+from eink_calendar.calendar_source.local_files import write_private_text
+
 __all__ = ["READONLY_SCOPES", "CalendarAuthError", "load_credentials"]
 
 READONLY_SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
@@ -49,7 +51,9 @@ def load_credentials(
 
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        path.write_text(creds.to_json(), encoding="utf-8")
+        # token.json holds a live refresh token — write it 0600, never with the
+        # default umask. See eink_calendar.calendar_source.local_files.
+        write_private_text(path, creds.to_json())
         return creds
 
     raise CalendarAuthError(
