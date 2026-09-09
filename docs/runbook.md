@@ -8,10 +8,10 @@ This guide is generic and public — it assumes no prior context on the project.
 Replace `<owner>/<repo>` and the example paths with your own values.
 
 > **Status:** Cross-checked against `SECURITY.md` (#4), `scripts/setup_oauth.py`
-> (#14), and the merged infra from #15 (`systemd/eink-calendar.service`,
-> `scripts/deploy.sh`, `scripts/pull_preview.sh`). §9–§10 now describe the
-> shipped files. Two defects in the shipped infra are noted inline and reported
-> on #15 — the workarounds here are correct in the meantime.
+> (#14), and the infra from #15. §5/§9/§10 describe the release-tarball deploy
+> model in PR #52 (`deploy.sh code|secrets|all <pi-host> [VERSION]`,
+> `EINK_CALENDAR_CONFIG` in the unit, `pull_preview.sh` defaulting to
+> `~eink-calendar/app`). **Merge PR #52 before this one.**
 
 ---
 
@@ -57,22 +57,23 @@ mode `0600` and `config.yaml` is `0640` (§6).
 
 ## 5. Install the application
 
-Always deploy a **tagged release**, never `main` HEAD. Install as a git checkout
-at `~eink-calendar/app` so that `scripts/deploy.sh` (§10) can update it later —
-`deploy.sh code` requires `~eink-calendar/app/.git` to exist.
+Always deploy a **tagged release**, never `main` HEAD. Install the release
+tarball and point `~eink-calendar/app` at it — no git checkout on the Pi.
+`scripts/deploy.sh code` (§10) automates exactly these steps for later updates.
 
 ```bash
 # pick the latest tag from https://github.com/<owner>/<repo>/releases
 VERSION=v1.0.0
 sudo -u eink-calendar -H bash -c "
-  git clone --branch ${VERSION} --depth 1 https://github.com/<owner>/<repo>.git ~/app
+  cd ~ &&
+  curl -fsSL https://github.com/<owner>/<repo>/archive/refs/tags/${VERSION}.tar.gz | tar xz &&
+  ln -sfn <repo>-${VERSION#v} app
 "
 ```
 
-A plain tag checkout leaves the repo in detached HEAD; `deploy.sh code` moves the
-Pi onto a branch (see §10), so for ongoing updates track a release branch rather
-than re-cloning each tag. If you prefer a tarball install (no git), you must run
-future updates by hand — `deploy.sh` will refuse a non-git checkout.
+`~app` stays a symlink to the extracted `<repo>-<version>` directory; a deploy
+just extracts the new release and repoints the symlink, and the systemd unit
+resolves it afresh on every restart.
 
 Install the Pi runtime dependencies (the Pi-only set — GPIO + Inky libraries):
 
@@ -208,25 +209,24 @@ The shipped unit (`systemd/eink-calendar.service`, owned by `gitops-manager`) is
 authoritative. Key settings:
 
 - `User=eink-calendar` / `Group=eink-calendar`,
-  `WorkingDirectory=/home/eink-calendar/app`,
+  `WorkingDirectory=/home/eink-calendar/app` (a symlink systemd resolves afresh
+  on every start — repointing it, as a deploy does, takes effect on the next
+  `systemctl restart`),
   `ExecStart=…/app/.venv/bin/python -m eink_calendar.app`
+- `Environment=EINK_CALENDAR_CONFIG=/home/eink-calendar/.config/eink-calendar/config.yaml`
+  — set explicitly so config resolution (§6) does not depend on `HOME`
 - `Restart=on-failure`, `RestartSec=5`, `After=/Wants=network-online.target`,
   `WantedBy=multi-user.target` — it comes back on its own after a reboot or a
   transient crash
 - Hardening (`SECURITY.md` §5): `UMask=0077` (so `data/last_render.png` — a
   picture of the family calendar — is not world-readable), `NoNewPrivileges=true`,
   `ProtectSystem=strict`, `ProtectHome=read-only` with
-  `ReadWritePaths=/home/eink-calendar/app/data /home/eink-calendar/.config/eink-calendar`,
+  `ReadWritePaths=-/home/eink-calendar/app/data /home/eink-calendar/.config/eink-calendar`
+  (the leading `-` tolerates the release-relative `data/` dir not existing yet),
   `PrivateTmp=true`, plus `ProtectKernelTunables/Modules`, `ProtectControlGroups`,
   `RestrictRealtime`, `RestrictSUIDSGID`, `LockPersonality`
 - SPI/GPIO device access is left at the default policy pending hardware bring-up
   (§11); tightening to `DevicePolicy=closed` needs the real panel to verify
-
-> **Known defect (reported on #15):** the unit sets
-> `Environment=EINK_CONFIG_DIR=…`, but the app reads `$EINK_CALENDAR_CONFIG`
-> (a file path), not `$EINK_CONFIG_DIR` — see §6. The dead variable is harmless:
-> config resolves via the default `~/.config/eink-calendar/config.yaml` for the
-> service user. Do not rely on `EINK_CONFIG_DIR`.
 
 Check it:
 
@@ -239,18 +239,19 @@ Within a few seconds the panel should show the default view.
 
 ## 10. Deploying updates
 
-`scripts/deploy.sh` is git-based and has three subcommands:
+`scripts/deploy.sh` is release-based — it does the same tarball-and-symlink dance
+as §5, over SSH. Three subcommands:
 
 ```bash
-scripts/deploy.sh code    <pi-host>   # push current branch → Pi pulls, reinstalls requirements-pi.txt, restarts service
-scripts/deploy.sh secrets <pi-host>   # rsync local ~/.config/eink-calendar/ → Pi (dir 0700 / files 0600 enforced)
-scripts/deploy.sh all     <pi-host>   # secrets, then code
+scripts/deploy.sh code    <pi-host> [VERSION]   # fetch release tarball → repoint ~/app → reinstall requirements-pi.txt → restart
+scripts/deploy.sh secrets <pi-host>             # rsync local ~/.config/eink-calendar/ → Pi (dir 0700 / files 0600 enforced)
+scripts/deploy.sh all     <pi-host> [VERSION]   # secrets, then code
 ```
 
-It expects the Pi set up per §4–§7: a `--system` service user (`eink-calendar`),
-a **git checkout** at `~eink-calendar/app` (§5), and passwordless-or-prompted
-`sudo` for the SSH user. `deploy.sh code` follows whatever branch you have
-checked out locally; it will not deploy a detached tag.
+`VERSION` is a release tag such as `v1.0.0`; omitted, it uses the newest tag in
+your local checkout (`git describe --tags --abbrev=0`). No git checkout is needed
+on the Pi — only the §4–§7 setup (service user, `~/app` symlink, config dir) and
+passwordless-or-prompted `sudo` for the SSH user.
 
 Secrets under `~eink-calendar/.config/eink-calendar/` are **never** touched by
 the `code` path — only the explicit `secrets` subcommand syncs them, and only
@@ -258,25 +259,22 @@ when they actually change. Point the revoke/rotate procedure (§13) at
 `deploy.sh secrets` for pushing rotated tokens.
 
 Environment overrides (all optional): `EINK_SERVICE_USER` (default
-`eink-calendar`), `EINK_REMOTE_DIR` (default `/home/eink-calendar/app`),
-`EINK_SERVICE` (default `eink-calendar`), `EINK_CONFIG_DIR` (default
-`$HOME/.config/eink-calendar` — the *local* rsync source), `EINK_SSH_USER`.
+`eink-calendar`), `EINK_HOME` (default `/home/<service user>`), `EINK_SERVICE`
+(default `eink-calendar`), `EINK_CONFIG_DIR` (default `$HOME/.config/eink-calendar`
+— the *local* rsync source), `EINK_REPO_SLUG` (default: parsed from `origin`),
+`EINK_SSH_USER`.
 
 ### Previewing the current screen
 
 Without anything running on the Pi beyond `sshd`:
 
 ```bash
-EINK_REMOTE_DIR=/home/eink-calendar/app scripts/pull_preview.sh <pi-host>
+scripts/pull_preview.sh <pi-host>
 ```
 
-This copies the Pi's `data/last_render.png` locally and opens it.
-
-> **Known defect (reported on #15):** `pull_preview.sh` defaults
-> `EINK_REMOTE_DIR` to `/opt/eink-calendar`, which does not match the
-> `/home/eink-calendar/app` layout the rest of this guide uses. Until it is
-> fixed, pass `EINK_REMOTE_DIR=/home/eink-calendar/app` (as above) or set
-> `EINK_REMOTE_RENDER` to the full path of `last_render.png`.
+This copies the Pi's `data/last_render.png` (from `~eink-calendar/app/data/`)
+locally and opens it. Override `EINK_REMOTE_DIR` or `EINK_REMOTE_RENDER` if your
+layout differs.
 
 ---
 
