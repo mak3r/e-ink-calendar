@@ -17,10 +17,14 @@ else
   echo "PASS: No TODO comments"
 fi
 
-# Run bandit security scanner if available
+# Run bandit security scanner if available.
+# Scan the project packages explicitly rather than `-r .`: bandit's -x matches
+# path globs, not bare substrings, so `-x '.venv,...'` never actually excluded a
+# repo-root .venv/ — a local virtualenv would drag ~650k lines of third-party
+# site-packages into the scan and fail the gate (issue #62).
 if command -v bandit > /dev/null 2>&1; then
   echo "Running bandit security scan..."
-  if ! bandit -r . -x '.venv,tests,test_*' -ll -q 2>/dev/null; then
+  if ! bandit -r eink_calendar scripts -ll -q 2>/dev/null; then
     echo "FAIL: bandit found security issues"
     FAILED=1
   else
@@ -30,10 +34,13 @@ else
   echo "SKIP: bandit not installed (install with: pip install bandit)"
 fi
 
-# Check for missing type annotations on public functions (requires mypy)
+# Check for missing type annotations on public functions (requires mypy).
+# Target the packages, not `.`, for the same reason as bandit above — a repo-root
+# .venv/ must not be able to break the gate (issue #62). mypy also honours the
+# per-package config in setup.cfg/pyproject when invoked this way.
 if command -v mypy > /dev/null 2>&1; then
   echo "Running mypy type check..."
-  if ! mypy . --ignore-missing-imports --no-error-summary 2>/dev/null; then
+  if ! mypy eink_calendar --ignore-missing-imports --no-error-summary 2>/dev/null; then
     echo "FAIL: mypy type errors found"
     FAILED=1
   else
