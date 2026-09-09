@@ -52,6 +52,9 @@ def render(
     y = header_bottom + _ROW_GAP
     line_h = text_size("Ag")[1]
     text_x = MARGIN + _SWATCH + 8
+    # Fixed-width time column so summaries line up and never touch the label.
+    label_w = max(text_size("all day")[0], text_size("00:00")[0]) + 12
+    summary_x = text_x + label_w
     for event in todays:
         if y > height - MARGIN - line_h:
             break
@@ -63,7 +66,6 @@ def render(
         when_label = "all day" if event.all_day else event.start.strftime("%H:%M")
         draw_text(image, (text_x, y), when_label, fill="black")
 
-        summary_x = text_x + text_size("00:00 ")[0]
         wrapped = wrap_text(event.summary, width - MARGIN - summary_x) or [""]
         for i, seg in enumerate(wrapped):
             if y > height - MARGIN - line_h:
