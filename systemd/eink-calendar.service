@@ -15,7 +15,10 @@ Group=eink-calendar
 # scripts/deploy.sh); systemd resolves it afresh on every start, so a deploy
 # that repoints the symlink takes effect on the next `systemctl restart`.
 WorkingDirectory=/home/eink-calendar/app
-Environment=EINK_CONFIG_DIR=/home/eink-calendar/.config/eink-calendar
+# eink_calendar/config.py reads EINK_CALENDAR_CONFIG (a file path), then falls
+# back to ~/.config/eink-calendar/config.yaml. Set it explicitly so the unit
+# does not depend on HOME resolution.
+Environment=EINK_CALENDAR_CONFIG=/home/eink-calendar/.config/eink-calendar/config.yaml
 ExecStart=/home/eink-calendar/app/.venv/bin/python -m eink_calendar.app
 Restart=on-failure
 RestartSec=5
