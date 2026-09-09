@@ -30,17 +30,22 @@ from eink_calendar.config import ConfigError, load_config
 
 _REMINDER = """\
 ────────────────────────────────────────────────────────────────────────
-Before you authorize, confirm BOTH of these in the Google Cloud console —
+Before you authorize, confirm ALL THREE of these —
 this script cannot check them for you, and getting them wrong means the
 display silently stops updating weeks later:
 
-  1. OAuth consent screen is set to "Production" (NOT "Testing").
-     Testing-mode refresh tokens expire after 7 days; the family would
-     have to re-authorize constantly.
+  1. OAuth consent screen is set to "Production" (NOT "Testing") in the
+     Google Cloud console. Testing-mode refresh tokens expire after 7
+     days; the family would have to re-authorize constantly.
 
   2. Two-factor authentication is enabled on the Google account you are
      about to sign in with. This token is long-lived and lives on a
      device in a shared household.
+
+  3. The account is NOT enrolled in Google's Advanced Protection Program
+     (check at https://myaccount.google.com/advanced-protection/). APP
+     silently blocks most third-party OAuth and breaks token refresh
+     later — use a different or dedicated account if it is enrolled.
 ────────────────────────────────────────────────────────────────────────
 """
 
