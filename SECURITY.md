@@ -71,10 +71,22 @@ read) MUST satisfy all of the following:
 - That user owns `~/.config/eink-calendar/` (i.e. the service user's own home /
   config dir), and those files are mode `0600` (token/secret) or `0640`
   (config).
-- The unit should additionally apply standard hardening
-  (`NoNewPrivileges=true`, `ProtectSystem=strict`, `ProtectHome=` scoped to the
-  service user, `PrivateTmp=true`). Final unit content is owned by
-  `gitops-manager`; this section states the security requirements it must meet.
+- The unit MUST set `UMask=0077` so that any file the service writes outside
+  `local_files.write_private_text()` — notably `data/last_render.png`, which is
+  a picture of the family's calendar — is not world-readable.
+- The unit applies systemd sandboxing: `NoNewPrivileges=true`,
+  `ProtectSystem=strict`, `ProtectHome=read-only` with `ReadWritePaths=` scoped
+  to the checkout's `data/` and the service user's config dir, `PrivateTmp=true`,
+  `ProtectKernelTunables=true`, `ProtectKernelModules=true`,
+  `ProtectControlGroups=true`, `RestrictRealtime=true`, `RestrictSUIDSGID=true`,
+  `LockPersonality=true`.
+- Device access (SPI/GPIO) is left at the default policy until hardware
+  bring-up; tightening to `DevicePolicy=closed` + explicit `DeviceAllow=` for
+  the Inky panel's `/dev` nodes is tracked for the bring-up phase and must be
+  verified against real hardware.
+- Final unit content is owned by `gitops-manager`; this section states the
+  security requirements it must meet, and is kept in sync with
+  `systemd/eink-calendar.service` as that file changes.
 
 ---
 
