@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from eink_calendar.calendar_source.local_files import write_private_text
 from eink_calendar.calendar_source.models import Event
 
 __all__ = ["CacheContents", "load_cache", "save_cache"]
@@ -55,16 +56,15 @@ def load_cache(path: str | os.PathLike[str]) -> CacheContents:
 
 
 def save_cache(path: str | os.PathLike[str], contents: CacheContents) -> None:
-    """Write the cache atomically, creating the parent directory if needed."""
-    cache_path = Path(path).expanduser()
-    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    """Write the cache atomically as a ``0600`` file in a ``0700`` directory.
 
+    ``cache.json`` holds personal data (event titles/times/descriptions), so it
+    must not be world-readable regardless of the process umask — see
+    :mod:`eink_calendar.calendar_source.local_files`.
+    """
     payload = {
         "schema_version": _SCHEMA_VERSION,
         "fetched_at": contents.fetched_at.isoformat() if contents.fetched_at else None,
         "events": [event.to_dict() for event in contents.events],
     }
-
-    tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
-    tmp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    os.replace(tmp_path, cache_path)
+    write_private_text(path, json.dumps(payload, indent=2))
