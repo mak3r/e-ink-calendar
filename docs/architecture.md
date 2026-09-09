@@ -364,6 +364,15 @@ verification against the real panel.
 
 ### Deploy (`scripts/deploy.sh`)
 
+**Canonical install method: the tagged release tarball (decided, #47).** An
+early sketch had `deploy.sh` do a git clone/pull on the Pi; the team moved to
+release tarballs (PR #52) and that is now the one canonical method. Rationale:
+the Pi needs no git, no build toolchain, and no repo checkout; "always deploy a
+tagged release, never `main` HEAD" is enforced structurally rather than by
+convention; and a device maintained by non-technical family should have the
+smallest possible on-device surface. `deploy.sh` and `docs/runbook.md`
+§5/§9/§10 agree on this model.
+
 Release-tarball based, over SSH — a Pi set up from the runbook can be updated with
 this script and nothing else (**no git checkout on the Pi**):
 
@@ -377,9 +386,8 @@ this script and nothing else (**no git checkout on the Pi**):
   in git and never in the code path.**
 - `deploy.sh all <pi-host> [VERSION]` — secrets, then code.
 
-> **Open reconciliation (#47):** `deploy.sh` and `docs/runbook.md` §5 must agree
-> on exactly one canonical install method (release tarball vs. git clone).
-> Tracked separately; resolve before #15/#18 close.
+> **#47 (resolved):** canonical install method = release tarball. `deploy.sh`
+> and `docs/runbook.md` §5 agree; the git-clone/pull approach is dropped.
 
 ### Releases
 
@@ -461,9 +469,10 @@ never `main` HEAD.
 
 ## Known open design questions
 
-- **#47** — canonical install method (tarball vs git clone); `deploy.sh` and
-  runbook §5 currently disagree.
+- ~~**#47** — canonical install method~~ **resolved: release tarball** (see the
+  Deploy section above).
 - **#15** — `DevicePolicy`/`DeviceAllow` tightening for SPI/GPIO, pending real
-  hardware.
+  hardware; also the first-boot hardware bring-up checklist (`docs/runbook.md`
+  §11).
 - Automated lint rule for "no hex/RGB literals outside `render/palette.py`" —
   currently review-enforced only.
