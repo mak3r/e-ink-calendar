@@ -5,5 +5,5 @@ It records where this project's scaffolding came from so that
 /backport-to-scaffold can propose improvements back upstream. -->
 
 scaffold-repo: mak3r/claude-scaffolding
-scaffold-version: <!-- filled in by /create-project with the git SHA used -->
-created: <!-- filled in by /create-project with the creation date -->
+scaffold-version: 4406597f
+created: 2026-09-09

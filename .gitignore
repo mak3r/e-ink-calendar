@@ -57,3 +57,16 @@ temp/
 
 # Project-specific patterns
 # Add your language/framework-specific ignores below this line
+.venv/
+venv/
+*.egg-info/
+
+# Google OAuth / device config — canonical copies live outside the repo tree
+# (~/.config/eink-calendar/ on the Pi and dev machines), but these patterns
+# are a defense-in-depth backstop in case one ever ends up repo-relative.
+token.json
+*_token.json
+*_credentials.json
+config/config.yaml
+config/credentials/
+data/

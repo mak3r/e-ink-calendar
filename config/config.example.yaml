@@ -1,0 +1,33 @@
+# Copy this file to config/config.yaml (or a location outside the repo checkout,
+# e.g. ~/.config/eink-calendar/config.yaml — see docs/architecture.md) and fill
+# in real values. config.yaml itself is gitignored and must never be committed.
+
+display:
+  driver: mock            # "inky" | "mock"
+  mock_output_path: "./data/preview.png"
+  mock_auto_open: true
+  resolution: [800, 480]   # confirm against inky.auto().resolution during Pi bring-up
+
+refresh:
+  daily_time: "05:30"
+  timezone: "America/New_York"
+
+view:
+  default: day
+  week_starts_on: monday
+
+buttons:
+  pin_map: {A: 5, B: 6, C: 16, D: 24}   # confirm against Pimoroni's current pinout docs during Pi bring-up
+  bindings: {A: cycle_view, B: force_refresh, C: noop, D: noop}  # D reserved for future settings menu
+
+accounts:
+  - name: personal
+    credentials_file: "~/.config/eink-calendar/personal_credentials.json"
+    token_file: "~/.config/eink-calendar/personal_token.json"
+    calendars:
+      - {id: "primary", label: "Example", color: red}
+      # - {id: "family01234@group.calendar.google.com", label: "Family", color: blue}
+  # a second `accounts` entry is how a future second Google account gets added — no code change needed
+
+cache:
+  path: "data/cache.json"
