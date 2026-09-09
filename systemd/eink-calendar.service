@@ -1,0 +1,27 @@
+[Unit]
+Description=E-Ink Calendar display service
+Documentation=https://github.com/mak3r/e-ink-calendar
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Runs as a dedicated non-sudo user created during install (see scripts/deploy.sh).
+# The service user owns only the checkout and ~/.config/eink-calendar/.
+User=eink
+Group=eink
+WorkingDirectory=/opt/eink-calendar
+Environment=EINK_CONFIG_DIR=/home/eink/.config/eink-calendar
+ExecStart=/opt/eink-calendar/.venv/bin/python /opt/eink-calendar/app.py
+Restart=on-failure
+RestartSec=5
+
+# Hardening — the service needs GPIO/SPI and its config dir, nothing else.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/eink-calendar/data /home/eink/.config/eink-calendar
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
