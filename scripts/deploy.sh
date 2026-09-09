@@ -55,6 +55,13 @@ deploy_code() {
     REMOTE_DIR="${REMOTE_DIR}" SERVICE="${SERVICE}" SERVICE_USER="${SERVICE_USER}" BRANCH="${branch}" \
     'bash -s' <<'REMOTE'
 set -euo pipefail
+if [ ! -d "${REMOTE_DIR}/.git" ]; then
+  echo "deploy: ${REMOTE_DIR} is not a git checkout." >&2
+  echo "        deploy.sh needs a git-based install. Set it up once with:" >&2
+  echo "        sudo -u ${SERVICE_USER} git clone <repo-url> ${REMOTE_DIR}" >&2
+  echo "        (see docs/runbook.md §5)" >&2
+  exit 1
+fi
 cd "${REMOTE_DIR}"
 sudo -u "${SERVICE_USER}" git fetch --prune origin
 sudo -u "${SERVICE_USER}" git checkout "${BRANCH}"
