@@ -7,10 +7,11 @@ Month views.
 This guide is generic and public — it assumes no prior context on the project.
 Replace `<owner>/<repo>` and the example paths with your own values.
 
-> **Status:** Cross-checked against `SECURITY.md` (#4) and
-> `scripts/setup_oauth.py` (#14), both merged. The systemd unit and `deploy.sh` /
-> `pull_preview.sh` details (§9–§10) still track issue #15 — confirm the exact
-> unit-file contents and deploy flow against that once merged.
+> **Status:** Cross-checked against `SECURITY.md` (#4), `scripts/setup_oauth.py`
+> (#14), and the infra from #15. §5/§9/§10 describe the release-tarball deploy
+> model in PR #52 (`deploy.sh code|secrets|all <pi-host> [VERSION]`,
+> `EINK_CALENDAR_CONFIG` in the unit, `pull_preview.sh` defaulting to
+> `~eink-calendar/app`). **Merge PR #52 before this one.**
 
 ---
 
@@ -56,7 +57,9 @@ mode `0600` and `config.yaml` is `0640` (§6).
 
 ## 5. Install the application
 
-Always deploy a **tagged release**, never `main` HEAD.
+Always deploy a **tagged release**, never `main` HEAD. Install the release
+tarball and point `~eink-calendar/app` at it — no git checkout on the Pi.
+`scripts/deploy.sh code` (§10) automates exactly these steps for later updates.
 
 ```bash
 # pick the latest tag from https://github.com/<owner>/<repo>/releases
@@ -67,6 +70,10 @@ sudo -u eink-calendar -H bash -c "
   ln -sfn <repo>-${VERSION#v} app
 "
 ```
+
+`~app` stays a symlink to the extracted `<repo>-<version>` directory; a deploy
+just extracts the new release and repoints the symlink, and the systemd unit
+resolves it afresh on every restart.
 
 Install the Pi runtime dependencies (the Pi-only set — GPIO + Inky libraries):
 
@@ -81,9 +88,18 @@ sudo -u eink-calendar -H bash -c "
 ## 6. Configure
 
 Configuration and all secrets live **outside the repo checkout** — never in the
-working tree, not even git-ignored (`SECURITY.md` §1). The app resolves them
-from `$XDG_CONFIG_HOME/eink-calendar/`, falling back to
-`~/.config/eink-calendar/` (i.e. the service user's own config dir).
+working tree, not even git-ignored (`SECURITY.md` §1). With no `--config`
+argument, `load_config()` (`eink_calendar/config.py`) looks in this order:
+
+1. `$EINK_CALENDAR_CONFIG` — a full path to the `config.yaml` file (not a
+   directory)
+2. `~/.config/eink-calendar/config.yaml` — the service user's own config dir
+   (this is what the systemd unit relies on)
+3. `./config/config.yaml` — relative to the working directory (dev only)
+
+There is no `$XDG_CONFIG_HOME` handling. Running as the `eink-calendar` user,
+path 2 resolves to `/home/eink-calendar/.config/eink-calendar/config.yaml`, so
+no environment variable is needed on the Pi.
 
 ```bash
 sudo -u eink-calendar -H bash -c "
@@ -114,7 +130,9 @@ Set at least:
 - `refresh.daily_time` and `refresh.timezone` — when the daily auto-refresh runs
 - `accounts[].calendars[].color` — one of the six palette keys
   (`black`, `white`, `red`, `yellow`, `blue`, `green`), never a raw hex value
-- `accounts[].credentials_file` / `token_file` — paths under `~/.config/eink-calendar/`
+- `accounts[].credentials_file` / `token_file` — absolute or `~`-prefixed paths
+  under `~/.config/eink-calendar/` (they are `expanduser()`'d but **not** resolved
+  relative to the config file, so a bare filename will not be found)
 
 ## 7. Google Cloud project + OAuth client
 
@@ -187,13 +205,28 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now eink-calendar.service
 ```
 
-The unit runs as the `eink-calendar` user, `Restart=on-failure`,
-`After=network-online.target`, so it comes back on its own after a reboot or a
-transient crash. Per `SECURITY.md` §5 it also applies standard hardening —
-`NoNewPrivileges=true`, `ProtectSystem=strict`, `PrivateTmp=true`, and
-`ProtectHome=` scoped so the service can still read
-`~eink-calendar/.config/eink-calendar/`. Final unit content is owned by
-`gitops-manager` (issue #15).
+The shipped unit (`systemd/eink-calendar.service`, owned by `gitops-manager`) is
+authoritative. Key settings:
+
+- `User=eink-calendar` / `Group=eink-calendar`,
+  `WorkingDirectory=/home/eink-calendar/app` (a symlink systemd resolves afresh
+  on every start — repointing it, as a deploy does, takes effect on the next
+  `systemctl restart`),
+  `ExecStart=…/app/.venv/bin/python -m eink_calendar.app`
+- `Environment=EINK_CALENDAR_CONFIG=/home/eink-calendar/.config/eink-calendar/config.yaml`
+  — set explicitly so config resolution (§6) does not depend on `HOME`
+- `Restart=on-failure`, `RestartSec=5`, `After=/Wants=network-online.target`,
+  `WantedBy=multi-user.target` — it comes back on its own after a reboot or a
+  transient crash
+- Hardening (`SECURITY.md` §5): `UMask=0077` (so `data/last_render.png` — a
+  picture of the family calendar — is not world-readable), `NoNewPrivileges=true`,
+  `ProtectSystem=strict`, `ProtectHome=read-only` with
+  `ReadWritePaths=-/home/eink-calendar/app/data /home/eink-calendar/.config/eink-calendar`
+  (the leading `-` tolerates the release-relative `data/` dir not existing yet),
+  `PrivateTmp=true`, plus `ProtectKernelTunables/Modules`, `ProtectControlGroups`,
+  `RestrictRealtime`, `RestrictSUIDSGID`, `LockPersonality`
+- SPI/GPIO device access is left at the default policy pending hardware bring-up
+  (§11); tightening to `DevicePolicy=closed` needs the real panel to verify
 
 Check it:
 
@@ -206,20 +239,42 @@ Within a few seconds the panel should show the default view.
 
 ## 10. Deploying updates
 
-Use `scripts/deploy.sh` (git-based): it pushes the new release, pulls it on the
-Pi, reinstalls `requirements-pi.txt`, and restarts the service over SSH.
-Secrets under `~eink-calendar/.config/eink-calendar/` are **never** touched by git — they
-are synced separately, by an explicit rsync step, only when they actually
-change.
+`scripts/deploy.sh` is release-based — it does the same tarball-and-symlink dance
+as §5, over SSH. Three subcommands:
 
-To preview the current screen from your desk without anything extra running on
-the Pi (only `sshd`):
+```bash
+scripts/deploy.sh code    <pi-host> [VERSION]   # fetch release tarball → repoint ~/app → reinstall requirements-pi.txt → restart
+scripts/deploy.sh secrets <pi-host>             # rsync local ~/.config/eink-calendar/ → Pi (dir 0700 / files 0600 enforced)
+scripts/deploy.sh all     <pi-host> [VERSION]   # secrets, then code
+```
+
+`VERSION` is a release tag such as `v1.0.0`; omitted, it uses the newest tag in
+your local checkout (`git describe --tags --abbrev=0`). No git checkout is needed
+on the Pi — only the §4–§7 setup (service user, `~/app` symlink, config dir) and
+passwordless-or-prompted `sudo` for the SSH user.
+
+Secrets under `~eink-calendar/.config/eink-calendar/` are **never** touched by
+the `code` path — only the explicit `secrets` subcommand syncs them, and only
+when they actually change. Point the revoke/rotate procedure (§13) at
+`deploy.sh secrets` for pushing rotated tokens.
+
+Environment overrides (all optional): `EINK_SERVICE_USER` (default
+`eink-calendar`), `EINK_HOME` (default `/home/<service user>`), `EINK_SERVICE`
+(default `eink-calendar`), `EINK_CONFIG_DIR` (default `$HOME/.config/eink-calendar`
+— the *local* rsync source), `EINK_REPO_SLUG` (default: parsed from `origin`),
+`EINK_SSH_USER`.
+
+### Previewing the current screen
+
+Without anything running on the Pi beyond `sshd`:
 
 ```bash
 scripts/pull_preview.sh <pi-host>
 ```
 
-This copies the Pi's `data/last_render.png` locally and opens it.
+This copies the Pi's `data/last_render.png` (from `~eink-calendar/app/data/`)
+locally and opens it. Override `EINK_REMOTE_DIR` or `EINK_REMOTE_RENDER` if your
+layout differs.
 
 ---
 
@@ -296,9 +351,10 @@ showing its last render and log `invalid_grant` on the next refresh.
 
 ### How to reissue after revoking
 
-1. Re-run the one-time consent for each account (section 8) and copy the new
-   token files back to the Pi (the dead `*_token.json` were already removed in
-   "How to revoke" step 5).
+1. Re-run the one-time consent for each account (section 8), then push the
+   refreshed config dir to the Pi with `scripts/deploy.sh secrets <pi-host>`
+   (or `scp` the individual token files). The dead `*_token.json` were already
+   removed in "How to revoke" step 5.
 2. Restart the service:
    ```bash
    sudo systemctl restart eink-calendar.service
