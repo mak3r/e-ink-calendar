@@ -5,8 +5,12 @@
 # reinstall Pi requirements, and restart the systemd service.
 #
 # Secrets are NEVER deployed by the git path. They live outside the checkout in
-# ~/.config/eink-calendar/ and are synced only by the explicit `secrets`
-# subcommand below (rsync, not git).
+# the service user's ~/.config/eink-calendar/ and are synced only by the
+# explicit `secrets` subcommand below (rsync + sudo cp, not git).
+#
+# Assumes the Pi has been set up per docs/runbook.md §4–§7: a dedicated
+# `--system` service user (default name `eink-calendar`) with no login shell,
+# in the spi,gpio groups, owning ~/app and ~/.config/eink-calendar/.
 #
 # Usage:
 #   scripts/deploy.sh code    <pi-host>   # push + pull + reinstall + restart
@@ -14,14 +18,16 @@
 #   scripts/deploy.sh all     <pi-host>   # secrets, then code
 #
 # Environment:
-#   EINK_REMOTE_DIR   checkout path on the Pi   (default: /opt/eink-calendar)
-#   EINK_SERVICE      systemd unit name         (default: eink-calendar)
-#   EINK_CONFIG_DIR   local secrets dir         (default: $HOME/.config/eink-calendar)
-#   EINK_SSH_USER     ssh user on the Pi        (default: the host's default)
+#   EINK_SERVICE_USER  service user on the Pi   (default: eink-calendar)
+#   EINK_REMOTE_DIR    checkout path on the Pi  (default: ~<service user>/app)
+#   EINK_SERVICE       systemd unit name        (default: eink-calendar)
+#   EINK_CONFIG_DIR    local secrets dir        (default: $HOME/.config/eink-calendar)
+#   EINK_SSH_USER      ssh user on the Pi       (default: the host's default; must have sudo)
 
 set -euo pipefail
 
-REMOTE_DIR="${EINK_REMOTE_DIR:-/opt/eink-calendar}"
+SERVICE_USER="${EINK_SERVICE_USER:-eink-calendar}"
+REMOTE_DIR="${EINK_REMOTE_DIR:-/home/${SERVICE_USER}/app}"
 SERVICE="${EINK_SERVICE:-eink-calendar}"
 CONFIG_DIR="${EINK_CONFIG_DIR:-$HOME/.config/eink-calendar}"
 
@@ -45,14 +51,16 @@ deploy_code() {
   git push origin "${branch}"
 
   echo "==> Deploying to ${target}:${REMOTE_DIR}"
-  ssh "${target}" REMOTE_DIR="${REMOTE_DIR}" SERVICE="${SERVICE}" BRANCH="${branch}" 'bash -s' <<'REMOTE'
+  ssh "${target}" \
+    REMOTE_DIR="${REMOTE_DIR}" SERVICE="${SERVICE}" SERVICE_USER="${SERVICE_USER}" BRANCH="${branch}" \
+    'bash -s' <<'REMOTE'
 set -euo pipefail
 cd "${REMOTE_DIR}"
-sudo -u eink git fetch --prune origin
-sudo -u eink git checkout "${BRANCH}"
-sudo -u eink git reset --hard "origin/${BRANCH}"
+sudo -u "${SERVICE_USER}" git fetch --prune origin
+sudo -u "${SERVICE_USER}" git checkout "${BRANCH}"
+sudo -u "${SERVICE_USER}" git reset --hard "origin/${BRANCH}"
 if [ -f requirements-pi.txt ]; then
-  sudo -u eink "${REMOTE_DIR}/.venv/bin/pip" install --quiet --upgrade -r requirements-pi.txt
+  sudo -u "${SERVICE_USER}" "${REMOTE_DIR}/.venv/bin/pip" install --quiet --upgrade -r requirements-pi.txt
 fi
 sudo systemctl restart "${SERVICE}.service"
 sudo systemctl --no-pager --lines=5 status "${SERVICE}.service" || true
@@ -64,11 +72,20 @@ deploy_secrets() {
   local target; target="$(ssh_host "$1")"
   [ -d "${CONFIG_DIR}" ] || die "local config dir not found: ${CONFIG_DIR}"
 
-  echo "==> Syncing secrets ${CONFIG_DIR}/ -> ${target}:~/.config/eink-calendar/"
+  local stage="/tmp/eink-secrets-$$"
+  echo "==> Staging secrets ${CONFIG_DIR}/ -> ${target}:${stage}/"
   # Trailing slash on source: copy contents, not the dir itself.
-  # --delete keeps the Pi in sync with local; adjust if you keep Pi-only files.
-  rsync -az --delete --chmod=D700,F600 \
-    "${CONFIG_DIR}/" "${target}:.config/eink-calendar/"
+  rsync -az --delete --chmod=D700,F600 "${CONFIG_DIR}/" "${target}:${stage}/"
+
+  echo "==> Installing into ~${SERVICE_USER}/.config/eink-calendar/ as ${SERVICE_USER}"
+  ssh "${target}" STAGE="${stage}" SERVICE_USER="${SERVICE_USER}" 'bash -s' <<'REMOTE'
+set -euo pipefail
+DEST="$(getent passwd "${SERVICE_USER}" | cut -d: -f6)/.config/eink-calendar"
+sudo install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" -m 700 "${DEST}"
+sudo rsync -a --delete --chown="${SERVICE_USER}:${SERVICE_USER}" "${STAGE}/" "${DEST}/"
+sudo find "${DEST}" -type f -exec chmod 600 {} +
+rm -rf "${STAGE}"
+REMOTE
   echo "==> Secrets sync complete (never committed to git)"
 }
 
