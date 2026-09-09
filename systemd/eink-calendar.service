@@ -18,11 +18,25 @@ Restart=on-failure
 RestartSec=5
 
 # Hardening — the service needs GPIO/SPI, its checkout, and its config dir.
+# UMask=0077 is the compensating control cited by
+# eink_calendar/calendar_source/local_files.py: files the service writes
+# outside write_private_text() (e.g. data/last_render.png) must not be
+# world-readable — a render is a picture of the family's calendar.
+UMask=0077
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=/home/eink-calendar/app/data /home/eink-calendar/.config/eink-calendar
 PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# Device access (SPI/GPIO) is left at the default policy pending hardware
+# bring-up (#15); tightening to DevicePolicy=closed + explicit DeviceAllow
+# needs to be verified against the real Inky panel.
 
 [Install]
 WantedBy=multi-user.target
