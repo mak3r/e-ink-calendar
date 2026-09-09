@@ -32,7 +32,8 @@ def render(
     ``view_mode`` accepts a plain string or a ``view_state.ViewMode`` (which is a
     ``str`` enum). ``when`` defaults to today.
     """
-    mode = str(view_mode).lower()
+    # A str-mixed Enum's str() is "ViewMode.DAY" on 3.11, so read .value first.
+    mode = str(getattr(view_mode, "value", view_mode)).lower()
     # app.py always passes an explicit tz-aware `when` from the configured
     # timezone; this fallback only matters for ad-hoc/dev calls.
     day = when or date.today()  # noqa: DTZ011
