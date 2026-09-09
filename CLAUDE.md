@@ -24,17 +24,28 @@ If you find yourself about to write source code, edit application files, or run 
 
 ## Project Purpose
 
-<!-- ============================================================
-     FILL THIS IN: Replace this block with your project's purpose.
-     Include:
-       - What the project does (one paragraph)
-       - Primary language/runtime (e.g., Go 1.24, Python 3.12, Node 22)
-       - Module/package identifier (e.g., github.com/owner/repo)
-       - Any critical architectural facts agents need before touching code
-     ============================================================ -->
+A household calendar display: a Raspberry Pi driving a Pimoroni Inky Impression
+7.3" (Spectra 6-color e-paper) panel that shows Day/Week/Month views of one or
+more Google Calendars. Two physical buttons cycle the view and force a refresh;
+the display otherwise refreshes once daily on a schedule. The real end users
+are non-technical family members — once deployed, the device must run
+unattended indefinitely with no re-authentication required from them.
 
-**TODO:** Replace this section with your project's purpose, primary language,
-module path, and key technical facts. Agents read this first — make it accurate.
+- **Language/runtime:** Python 3.11 (matches Raspberry Pi OS Bookworm's system
+  Python).
+- **Package identifier:** `eink_calendar` (repo root package, run as
+  `python -m eink_calendar.app`).
+- **Critical architectural fact:** the codebase must import and run entirely on
+  a Mac with no GPIO hardware. Hardware-only imports (`inky`, `gpiozero`) are
+  confined to `eink_calendar/display/inky_driver.py` and
+  `eink_calendar/buttons/gpio_buttons.py`, loaded lazily only when config
+  selects the real driver. This is what makes Mac-based development the
+  primary dev loop, with the Pi used only for final hardware validation. See
+  `docs/architecture.md` for the full design (module layout, config schema,
+  OAuth flow, security considerations).
+- **Secrets:** Google OAuth tokens/credentials and `config.yaml` live outside
+  the repo checkout entirely (`~/.config/eink-calendar/`) — never read from or
+  written to a repo-relative path.
 
 ---
 
@@ -44,18 +55,15 @@ Every piece of work is owned by exactly one persona. A persona only modifies fil
 
 | Persona | Branch | Owns |
 |---|---|---|
-| **developer** | `feature/developer/<name>` | `<source/**>`, `<cmd/**>`, `<internal/**>` — replace with your project's source directories |
-| **test-engineer** | works in `feature/developer/<name>` alongside developer | `*_test.<ext>` files, `test/**`, mock implementations — replace with your test file patterns |
-| **security** | `persona/security` | `.gitignore`, `.env.template`, CI security steps in `.github/workflows/**`, secret handling review |
-| **qa** | `persona/qa` | `test/e2e/**`, `docs/acceptance-criteria.md`, `docs/runbook.md` |
-| **gitops-manager** | `persona/gitops-manager` | `.github/workflows/**`, `Makefile`, `scripts/**`, build/deploy infrastructure |
-| **docs** | `persona/docs` | `docs/**`, `README.md`, `CLAUDE.md`, `.claude/commands/**` |
+| **developer** | `feature/developer/<name>` | `eink_calendar/**` (excluding `*_test.py`), `scripts/render_once.py`, `scripts/setup_oauth.py` |
+| **test-engineer** | works in `feature/developer/<name>` alongside developer | `tests/**`, `*_test.py`, mock display/button implementations under `eink_calendar/display/mock_driver.py` and `eink_calendar/buttons/mock_buttons.py` |
+| **security** | `persona/security` | `.gitignore`, `.env.template`, CI security steps in `.github/workflows/**`, secret/credential handling conventions, `docs/runbook.md`'s revoke/rotate procedure (joint with qa) |
+| **qa** | `persona/qa` | `test/e2e/**`, `docs/acceptance-criteria.md`, `docs/runbook.md` (end-user install/operate guide) |
+| **gitops-manager** | `persona/gitops-manager` | `.github/workflows/**`, `Makefile`, `scripts/deploy.sh`, `scripts/pull_preview.sh`, `systemd/**`, `requirements-*.txt` |
+| **docs** | `persona/docs` | `docs/**` (excluding `runbook.md`/`acceptance-criteria.md`), `README.md`, `CLAUDE.md`, `.claude/commands/**` |
 | **merge-manager** | — (no commits) | Creates GitHub issues and PR comments only; merges approved PRs |
 | **product-designer** | `persona/product-designer` | `.claude/plans/**`, GitHub Issues (create only), `docs/architecture.md` (joint with docs) |
 | **triage** | — (no commits) | Creates GitHub issues only; never commits, never modifies files |
-
-<!-- Fill in the "Owns" column with the actual file patterns for your project.
-     The persona names, branch names, and rules never change. -->
 
 ---
 
@@ -204,14 +212,12 @@ To invoke: run the `/triage` Claude Code skill.
 
 ### Phase Determination
 
-<!-- FILL THIS IN: Replace these component examples with your project's actual components. -->
-
 | Affected Component | Phase Label |
 |---|---|
-| `Makefile`, `.github/workflows/**`, CI pipeline, project scaffolding, module setup | `phase/1-foundation` |
-| Core business logic, primary data structures, main processing path | `phase/2-core-logic` |
-| External integrations, APIs, third-party services, configuration | `phase/3-integration` |
-| E2E tests, `docs/runbook.md`, `docs/acceptance-criteria.md`, release pipeline | `phase/4-hardening` |
+| `Makefile`, `.github/workflows/**`, package skeleton, `requirements-*.txt`, `config.py`, `view_state.py` | `phase/1-foundation` |
+| `render/**` (day/week/month rendering, palette), `calendar_source/cache.py`, `app.py` main loop/scheduling | `phase/2-core-logic` |
+| `calendar_source/auth.py`/`fetch.py` (Google Calendar API + OAuth), `display/**`, `buttons/**` (real + mock drivers) | `phase/3-integration` |
+| `systemd/**`, `scripts/deploy.sh`, `scripts/pull_preview.sh`, `docs/runbook.md`, release pipeline, hardware bring-up on the physical Pi | `phase/4-hardening` |
 
 ---
 

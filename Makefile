@@ -5,22 +5,13 @@
 .PHONY: build test lint quality security-scan
 
 build:
-	@echo "ERROR: 'make build' is not configured for this project."
-	@echo "Replace this stub in Makefile with your real build command."
-	@echo "Examples: go build ./...  |  npm run build  |  cargo build  |  python -m build"
-	@exit 1
+	python -m compileall -q eink_calendar
 
 test:
-	@echo "ERROR: 'make test' is not configured for this project."
-	@echo "Replace this stub in Makefile with your real test command."
-	@echo "Examples: go test ./...  |  npm test  |  pytest  |  cargo test"
-	@exit 1
+	pytest -q
 
 lint:
-	@echo "ERROR: 'make lint' is not configured for this project."
-	@echo "Replace this stub in Makefile with your real lint command."
-	@echo "Examples: golangci-lint run  |  npm run lint  |  flake8  |  cargo clippy"
-	@exit 1
+	ruff check eink_calendar tests
 
 quality:
 	@if [ -f quality-specs/checks.sh ]; then \
