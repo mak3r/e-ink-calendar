@@ -1,0 +1,59 @@
+# Credentials and secrets — never commit these
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*credentials*.json
+.env
+*.env
+.env.*
+!.env.template
+
+# Claude local settings — these are machine-specific
+.claude/settings.local.json
+.claude/**/settings.local.json
+
+# Editor and OS artifacts
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+Thumbs.db
+
+# Common build output
+bin/
+dist/
+build/
+out/
+target/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.class
+node_modules/
+.next/
+vendor/
+
+# Common test artifacts
+*.out
+cover.out
+.coverage
+coverage.xml
+coverage.html
+*.lcov
+.pytest_cache/
+htmlcov/
+
+# Common runtime artifacts
+*.log
+*.pid
+*.sock
+tmp/
+temp/
+
+# Project-specific patterns
+# Add your language/framework-specific ignores below this line

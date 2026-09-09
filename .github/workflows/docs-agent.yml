@@ -1,0 +1,23 @@
+name: Docs Agent
+
+# Stub: triggers on merged PRs to develop and runs a docs update pass.
+# The docs persona reviews the PR diff and updates docs/ accordingly.
+# Implementation: invoke the docs persona Claude session to process the diff.
+# TODO: implement the docs agent automation here.
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - develop
+
+jobs:
+  docs-update:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Docs agent stub
+        run: |
+          echo "PR #${{ github.event.pull_request.number }} merged."
+          echo "Docs agent stub — implement automation here."
+          echo "When implemented, this job will invoke the docs persona to update docs/ for the merged changes."

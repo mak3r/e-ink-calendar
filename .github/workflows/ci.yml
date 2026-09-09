@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop, "feature/**", "persona/**"]
+  pull_request:
+    branches: [main, develop]
+
+# Language-agnostic CI. All jobs call Makefile targets.
+# To add language setup (e.g. Go, Node, Python), add the appropriate
+# setup step before the make call in the relevant job.
+# Example for Go: add "uses: actions/setup-go@v5 with: {go-version-file: go.mod}"
+# Example for Node: add "uses: actions/setup-node@v4 with: {node-version: '22'}"
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Add language setup steps here if your project requires them.
+      # Example:
+      # - uses: actions/setup-go@v5
+      #   with:
+      #     go-version-file: go.mod
+      #     cache: true
+
+      - name: Build
+        run: make build
+
+      - name: Test
+        run: make test
+
+  lint:
+    # Skip on direct pushes to feature/persona branches — the pull_request event covers those.
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.ref == 'refs/heads/main' ||
+      github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # required for diff-aware linters
+
+      # Add language setup steps here if your linter requires them.
+
+      - name: Lint
+        run: make lint
+
+  quality:
+    # Skip on direct pushes to feature/persona branches — the pull_request event covers those.
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.ref == 'refs/heads/main' ||
+      github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Quality checks
+        run: make quality

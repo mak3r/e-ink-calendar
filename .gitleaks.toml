@@ -1,0 +1,33 @@
+title = "claude-scaffolding gitleaks config"
+
+[extend]
+# Extend the default ruleset shipped with gitleaks
+useDefault = true
+
+[[allowlists]]
+description = "Test fixtures and documentation with intentionally fake/placeholder values"
+paths = [
+  '''test/.*''',
+  '''.*_test\.(go|py|ts|js|rb)$''',
+  '''docs/.*''',
+  '''.*\.md$''',
+]
+regexes = [
+  # Placeholder patterns used in tests and docs
+  '''REPLACE_ME''',
+  '''YOUR_.*_HERE''',
+  '''example-.*-key''',
+  '''fake-.*-secret''',
+  '''test-access-key''',
+  '''test-access-secret''',
+  '''placeholder''',
+  '''<your-.*>''',
+]
+
+# Add project-specific rules below this line.
+# Example:
+# [[rules]]
+# id = "my-api-key"
+# description = "My Service API Key"
+# regex = '''(?i)(my_api_key)\s*[=:]\s*['"]?([A-Za-z0-9]{32,})['"]?'''
+# tags = ["api", "key"]
