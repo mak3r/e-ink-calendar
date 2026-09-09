@@ -7,11 +7,10 @@ Month views.
 This guide is generic and public — it assumes no prior context on the project.
 Replace `<owner>/<repo>` and the example paths with your own values.
 
-> **Status:** Cross-checked against `SECURITY.md` (#4), `scripts/setup_oauth.py`
-> (#14), and the infra from #15. §5/§9/§10 describe the release-tarball deploy
-> model in PR #52 (`deploy.sh code|secrets|all <pi-host> [VERSION]`,
-> `EINK_CALENDAR_CONFIG` in the unit, `pull_preview.sh` defaulting to
-> `~eink-calendar/app`). **Merge PR #52 before this one.**
+> **Status:** Cross-checked against the merged `SECURITY.md` (#4),
+> `scripts/setup_oauth.py` (#14), `systemd/eink-calendar.service`,
+> `scripts/deploy.sh`, and `scripts/pull_preview.sh` (#15). §11 (hardware
+> bring-up) still needs one pass on real hardware.
 
 ---
 
