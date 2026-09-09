@@ -7,10 +7,10 @@ Month views.
 This guide is generic and public — it assumes no prior context on the project.
 Replace `<owner>/<repo>` and the example paths with your own values.
 
-> **Status:** The secret-handling rules here are cross-checked against
-> `SECURITY.md` (issue #4, merged). The `setup_oauth.py` invocation (§8) and the
-> systemd/`deploy.sh` details (§9–§10) still track issues #14 and #15 — confirm
-> the exact flags and unit-file contents against those once merged.
+> **Status:** Cross-checked against `SECURITY.md` (#4) and
+> `scripts/setup_oauth.py` (#14), both merged. The systemd unit and `deploy.sh` /
+> `pull_preview.sh` details (§9–§10) still track issue #15 — confirm the exact
+> unit-file contents and deploy flow against that once merged.
 
 ---
 
@@ -144,18 +144,30 @@ sudo -u eink-calendar -H chmod 600 ~eink-calendar/.config/eink-calendar/*credent
 ## 8. Run the one-time OAuth consent
 
 This is the **only** step that needs a browser, and it is run once per account.
-`scripts/setup_oauth.py` is the only place the app ever opens a browser — the Pi
-runtime never does.
+`scripts/setup_oauth.py` is the only place `InstalledAppFlow.run_local_server()`
+is ever called — the Pi runtime never opens a browser; it only silently refreshes
+an existing token.
 
 Easiest path: run it on your Mac/laptop (which has a browser), then copy the
-resulting token file to the Pi.
+resulting token file to the Pi. The machine you run it on needs both the
+account's `config.yaml` entry **and** its `credentials_file` (OAuth client
+secret) present at the configured paths — the script reads `credentials_file` /
+`token_file` straight from the config.
 
 ```bash
 # on a machine with a browser, in a checkout of the same release:
 pip install -r requirements-dev.txt
-python scripts/setup_oauth.py --account personal
-# follow the printed Production-status and 2FA reminders, complete consent in the browser
+
+# either invocation works:
+python -m scripts.setup_oauth --account personal
+python scripts/setup_oauth.py --account personal --config ~/my-config.yaml   # --config optional
 ```
+
+The script prints the **"Production" (not "Testing")** and **2FA** reminders,
+then waits for you to press **Enter** before opening the browser (Ctrl-C
+aborts). On success it writes the token to the account's `token_file`, created
+`0600` in a `0700` directory. Repeat `--account <name>` for each configured
+account.
 
 Copy the generated token to the Pi:
 
