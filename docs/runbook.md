@@ -7,10 +7,10 @@ Month views.
 This guide is generic and public — it assumes no prior context on the project.
 Replace `<owner>/<repo>` and the example paths with your own values.
 
-> **Status:** The install steps below describe the interfaces defined in
-> issues #4, #14 and #15. Cross-check the exact flags and unit-file contents
-> against `scripts/setup_oauth.py`, `scripts/deploy.sh`,
-> `systemd/eink-calendar.service` and `SECURITY.md` once those are merged.
+> **Status:** The secret-handling rules here are cross-checked against
+> `SECURITY.md` (issue #4, merged). The `setup_oauth.py` invocation (§8) and the
+> systemd/`deploy.sh` details (§9–§10) still track issues #14 and #15 — confirm
+> the exact flags and unit-file contents against those once merged.
 
 ---
 
@@ -43,12 +43,16 @@ After reboot, confirm `/dev/spidev0.0` exists.
 
 ## 4. Create a dedicated service user
 
-The calendar runs as its own non-sudo user — never as `pi` or root.
+The calendar runs as its own non-sudo system user — never as `pi` or root
+(`SECURITY.md` §5). This guide uses the user name `eink-calendar`.
 
 ```bash
-sudo useradd --system --create-home --shell /usr/sbin/nologin eink
-sudo usermod -aG spi,gpio eink
+sudo useradd --system --create-home --shell /usr/sbin/nologin eink-calendar
+sudo usermod -aG spi,gpio eink-calendar
 ```
+
+That user owns its own `~/.config/eink-calendar/` directory; secrets there are
+mode `0600` and `config.yaml` is `0640` (§6).
 
 ## 5. Install the application
 
@@ -57,7 +61,7 @@ Always deploy a **tagged release**, never `main` HEAD.
 ```bash
 # pick the latest tag from https://github.com/<owner>/<repo>/releases
 VERSION=v1.0.0
-sudo -u eink -H bash -c "
+sudo -u eink-calendar -H bash -c "
   cd ~ &&
   curl -fsSL https://github.com/<owner>/<repo>/archive/refs/tags/${VERSION}.tar.gz | tar xz &&
   ln -sfn <repo>-${VERSION#v} app
@@ -67,7 +71,7 @@ sudo -u eink -H bash -c "
 Install the Pi runtime dependencies (the Pi-only set — GPIO + Inky libraries):
 
 ```bash
-sudo -u eink -H bash -c "
+sudo -u eink-calendar -H bash -c "
   cd ~/app &&
   python3 -m venv .venv &&
   .venv/bin/pip install -r requirements-pi.txt
@@ -76,16 +80,32 @@ sudo -u eink -H bash -c "
 
 ## 6. Configure
 
-Configuration and all secrets live **outside the repo checkout**, under
-`~eink/.config/eink-calendar/`.
+Configuration and all secrets live **outside the repo checkout** — never in the
+working tree, not even git-ignored (`SECURITY.md` §1). The app resolves them
+from `$XDG_CONFIG_HOME/eink-calendar/`, falling back to
+`~/.config/eink-calendar/` (i.e. the service user's own config dir).
 
 ```bash
-sudo -u eink -H bash -c "
+sudo -u eink-calendar -H bash -c "
   mkdir -p ~/.config/eink-calendar &&
-  cp ~/app/config/config.example.yaml ~/.config/eink-calendar/config.yaml
+  cp ~/app/config/config.example.yaml ~/.config/eink-calendar/config.yaml &&
+  chmod 0640 ~/.config/eink-calendar/config.yaml
 "
-sudo -u eink -H nano ~eink/.config/eink-calendar/config.yaml
+sudo -u eink-calendar -H nano ~eink-calendar/.config/eink-calendar/config.yaml
 ```
+
+File modes in this directory (`SECURITY.md` §5):
+
+| File | Mode |
+|---|---|
+| `config.yaml` | `0640` |
+| `*_credentials.json` (OAuth client secret) | `0600` |
+| `*_token.json` (cached refresh/access token) | `0600` |
+
+`SECURITY.md` shows a single-account layout (`client_secret.json` / `token.json`);
+this project's config is multi-account from day one, so each `accounts[]` entry
+names its own `credentials_file` / `token_file` (e.g. `personal_credentials.json`,
+`personal_token.json`).
 
 Set at least:
 
@@ -111,8 +131,8 @@ Set at least:
 5. Copy it to the Pi as the account's `credentials_file`:
 
 ```bash
-sudo -u eink -H cp ~/personal_credentials.json ~eink/.config/eink-calendar/personal_credentials.json
-sudo -u eink -H chmod 600 ~eink/.config/eink-calendar/*credentials*.json
+sudo -u eink-calendar -H cp ~/personal_credentials.json ~eink-calendar/.config/eink-calendar/personal_credentials.json
+sudo -u eink-calendar -H chmod 600 ~eink-calendar/.config/eink-calendar/*credentials*.json
 ```
 
 ### Choosing the authorizing account
@@ -141,7 +161,7 @@ Copy the generated token to the Pi:
 
 ```bash
 scp ~/.config/eink-calendar/personal_token.json eink-host:/tmp/
-ssh eink-host 'sudo -u eink -H cp /tmp/personal_token.json ~eink/.config/eink-calendar/ && sudo -u eink -H chmod 600 ~eink/.config/eink-calendar/personal_token.json && rm /tmp/personal_token.json'
+ssh eink-host 'sudo -u eink-calendar -H cp /tmp/personal_token.json ~eink-calendar/.config/eink-calendar/ && sudo -u eink-calendar -H chmod 600 ~eink-calendar/.config/eink-calendar/personal_token.json && rm /tmp/personal_token.json'
 ```
 
 After this, the Pi refreshes the access token silently forever using the stored
@@ -150,14 +170,18 @@ refresh token — no further human interaction.
 ## 9. Install the systemd service
 
 ```bash
-sudo cp ~eink/app/systemd/eink-calendar.service /etc/systemd/system/
+sudo cp ~eink-calendar/app/systemd/eink-calendar.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now eink-calendar.service
 ```
 
-The unit runs as the `eink` user, `Restart=on-failure`,
+The unit runs as the `eink-calendar` user, `Restart=on-failure`,
 `After=network-online.target`, so it comes back on its own after a reboot or a
-transient crash.
+transient crash. Per `SECURITY.md` §5 it also applies standard hardening —
+`NoNewPrivileges=true`, `ProtectSystem=strict`, `PrivateTmp=true`, and
+`ProtectHome=` scoped so the service can still read
+`~eink-calendar/.config/eink-calendar/`. Final unit content is owned by
+`gitops-manager` (issue #15).
 
 Check it:
 
@@ -172,7 +196,7 @@ Within a few seconds the panel should show the default view.
 
 Use `scripts/deploy.sh` (git-based): it pushes the new release, pulls it on the
 Pi, reinstalls `requirements-pi.txt`, and restarts the service over SSH.
-Secrets under `~eink/.config/eink-calendar/` are **never** touched by git — they
+Secrets under `~eink-calendar/.config/eink-calendar/` are **never** touched by git — they
 are synced separately, by an explicit rsync step, only when they actually
 change.
 
@@ -238,7 +262,7 @@ button A presses, file a bug against `persona/developer`.
 
 ### When to revoke
 
-- The Pi, its SD card, or a backup containing `~eink/.config/eink-calendar/` is lost, sold, or disposed of
+- The Pi, its SD card, or a backup containing `~eink-calendar/.config/eink-calendar/` is lost, sold, or disposed of
 - You suspect the token or credentials JSON leaked (committed to a repo, pasted somewhere, emailed)
 - You are decommissioning the display
 - Routine hygiene: rotate at least once a year
@@ -246,23 +270,24 @@ button A presses, file a bug against `persona/developer`.
 ### How to revoke
 
 1. Sign in to the Google account the display uses.
-2. Go to **Google Account → Security → Your connections to third-party apps &
-   services** (`myaccount.google.com/connections`).
+2. Open <https://myaccount.google.com/permissions> (**Google Account → Security →
+   Third-party apps & services** / "Your connections").
 3. Select this app (the name is whatever you set on the OAuth consent screen).
-4. Choose **Delete all connections** / **Remove access**.
+4. Choose **Remove access** / **Delete all connections**.
+5. On the Pi, delete the cached token(s):
+   ```bash
+   sudo -u eink-calendar -H rm ~eink-calendar/.config/eink-calendar/*_token.json
+   ```
 
 This immediately invalidates every issued refresh token. The display will keep
 showing its last render and log `invalid_grant` on the next refresh.
 
 ### How to reissue after revoking
 
-1. On the Pi, delete the dead token files:
-   ```bash
-   sudo -u eink -H rm ~eink/.config/eink-calendar/*_token.json
-   ```
-2. Re-run the one-time consent for each account (section 8) and copy the new
-   token files back to the Pi.
-3. Restart the service:
+1. Re-run the one-time consent for each account (section 8) and copy the new
+   token files back to the Pi (the dead `*_token.json` were already removed in
+   "How to revoke" step 5).
+2. Restart the service:
    ```bash
    sudo systemctl restart eink-calendar.service
    ```
@@ -276,6 +301,8 @@ showing its last render and log `invalid_grant` on the next refresh.
 
 ### What never needs rotating
 
-The `calendar.readonly` scope is fixed for this project. If a future change
-appears to need write access, treat that as a security review item, not a
-config tweak.
+The `calendar.readonly` scope is fixed for this project (`SECURITY.md` §2). It
+MUST NOT be silently widened: any change to the requested scope set requires a
+`type/security` issue, explicit human approval, and a `SECURITY.md` update
+before merging — it is not a config tweak. A widened scope also forces a fresh
+consent flow for every account.
