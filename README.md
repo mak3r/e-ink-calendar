@@ -48,6 +48,28 @@ A Mac (or any non-GPIO machine) is all you need for development — see below.
 
 Full setup, wiring, and operational procedures are in the docs below.
 
+## Development
+
+`scripts/render_once.py` is the recommended fast iteration loop for layout,
+colour, and font work — it renders one frame through the mock display driver on
+a Mac with no Pi and no GPIO. It writes `data/last_render.png` at
+`config.display.resolution`.
+
+```bash
+# one-shot render of the current cache, opens the PNG — no network, no Pi
+python scripts/render_once.py --use-cache --open
+
+# refresh from Google first, then render
+python scripts/render_once.py --open
+```
+
+| Flag | Effect |
+|---|---|
+| `--use-cache` | Render from `cache.json` only; skip the network call entirely |
+| `--view {day,week,month}` | Override `config.view.default` for this render |
+| `--open` | Open the resulting PNG |
+| `--config <path>` | Use a specific config file instead of the default search path |
+
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md) — module layout, config schema,
