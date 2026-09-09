@@ -35,14 +35,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements-base.txt
+            requirements-dev.txt
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          for req in requirements.txt requirements-dev.txt; do
-            [ -f "$req" ] && pip install -r "$req"
-          done
-          true
+        run: pip install -r requirements-base.txt -r requirements-dev.txt bandit mypy
 
       - name: Test gate
         run: make test
