@@ -8,14 +8,15 @@
 #   scripts/pull_preview.sh <pi-host>
 #
 # Environment:
-#   EINK_REMOTE_DIR   checkout path on the Pi   (default: /opt/eink-calendar)
+#   EINK_REMOTE_DIR   app dir on the Pi         (default: /home/eink-calendar/app,
+#                     the service user's ~/app symlink — see docs/runbook.md §5)
 #   EINK_REMOTE_RENDER  path to the render, overrides REMOTE_DIR/data/last_render.png
 #   EINK_SSH_USER     ssh user on the Pi        (default: the host's default)
 #   EINK_PREVIEW_OUT  local output path         (default: ./data/last_render.png)
 
 set -euo pipefail
 
-REMOTE_DIR="${EINK_REMOTE_DIR:-/opt/eink-calendar}"
+REMOTE_DIR="${EINK_REMOTE_DIR:-/home/eink-calendar/app}"
 REMOTE_RENDER="${EINK_REMOTE_RENDER:-${REMOTE_DIR}/data/last_render.png}"
 OUT="${EINK_PREVIEW_OUT:-./data/last_render.png}"
 
