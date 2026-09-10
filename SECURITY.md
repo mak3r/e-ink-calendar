@@ -88,6 +88,37 @@ read) MUST satisfy all of the following:
   security requirements it must meet, and is kept in sync with
   `systemd/eink-calendar.service` as that file changes.
 
+## 6. Dependency pinning & supply-chain integrity
+
+The device is designed to run unattended indefinitely, so a dependency it
+installs today it may still be installing — unreviewed — a year from now. Loose
+version ranges mean every venv rebuild or `scripts/deploy.sh code` run resolves
+whatever PyPI / piwheels serve at that moment (this already caused #60, where
+`Pillow>=10.0` resolved to 12.3.0 and broke all rendering).
+
+Requirements the deploy path MUST meet:
+
+- **A fully pinned, hash-locked deploy manifest.** `requirements.lock` is
+  generated from `requirements-base.txt` + `requirements-pi.txt` with
+  `pip-compile --generate-hashes` (or `uv pip compile --generate-hashes`).
+  Every entry is `==`-pinned and carries `--hash=` lines, including transitive
+  dependencies.
+- **Installs use `--require-hashes`.** Both `scripts/deploy.sh` and
+  `docs/runbook.md` §5 install the Pi runtime from `requirements.lock` with
+  `pip install --require-hashes -r requirements.lock`, never from the loose
+  `requirements-*.txt` files.
+- **Loose ranges stay out of the runtime.** `requirements-base.txt` /
+  `requirements-pi.txt` remain the human-edited inputs; `requirements-dev.txt`
+  may keep ranges since it never reaches the device.
+- **Deliberate refresh cadence.** The lock is regenerated and reviewed on a
+  schedule, not incidentally. The `Dependency Audit` workflow
+  (`.github/workflows/dependency-audit.yml`) runs `pip-audit` weekly and on
+  every dependency change, and enforces the hash-lock policy above once
+  `requirements.lock` exists.
+- Final lock content, `scripts/deploy.sh`, and `requirements-*.txt` are owned by
+  `gitops-manager`; `docs/runbook.md` §5 by `qa`. This section states the
+  security requirements those must meet.
+
 ---
 
 ## Revoke / rotate (summary — full procedure lives in `docs/runbook.md`)
