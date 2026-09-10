@@ -346,22 +346,46 @@ layout differs.
 
 ## 11. First-boot hardware bring-up checklist
 
-Run once on real hardware and record the results here:
+Run once on real hardware and record the results here. **Results below are from
+the first v0.2.0 bring-up (Raspberry Pi OS Trixie, Inky Impression 7.3").**
 
 | Check | How | Result |
 |---|---|---|
 | `/dev/spidev0.0` and `/dev/i2c-1` both present | `ls -l /dev/spidev0.0 /dev/i2c-1` | _fill in_ |
 | Panel EEPROM visible on I2C | `i2cdetect -y 1` shows a device at `0x50` | _fill in_ |
-| App starts clean **as the service user** | `sudo -u eink-calendar -H ~eink-calendar/app/.venv/bin/python -m eink_calendar.app` (exercises SPI CS + I2C + lgpio inside the systemd sandbox constraints) | _fill in_ |
-| Panel detected | `python3 -c "from inky.auto import auto; print(auto().resolution)"` | _fill in_ |
-| `display.resolution` in config matches the line above | edit `config.yaml` | _fill in_ |
-| Panel actually refreshes with the composited image | watch after `systemctl start` | _fill in_ |
-| Button pin map matches [Pimoroni's current pinout](https://learn.pimoroni.com/) | compare to `buttons.pin_map` | _fill in_ |
-| Button A cycles Day → Week → Month | press it | _fill in_ |
-| Button B forces a refresh | press it, watch the journal | _fill in_ |
-| Buttons C and D do nothing (no crash, no log) | press them | _fill in_ |
+| App starts clean **as the service user** | `sudo -u eink-calendar -H bash -c '~/app/.venv/bin/python -m eink_calendar.app'` (exercises SPI CS + I2C + lgpio inside the systemd sandbox constraints) | yes (panel detected, buttons OK — see below) |
+| Panel detected | `sudo -u eink-calendar -H bash -c '~/app/.venv/bin/python -c "from inky.auto import auto; print(auto().resolution)"'` | `(800, 480)` |
+| `display.resolution` in config matches the line above | edit `config.yaml` | yes |
+| Panel actually refreshes with the composited image | watch after `systemctl start` | **no** — tracked in #100 |
+| Button pin map matches [Pimoroni's current pinout](https://learn.pimoroni.com/) | compare to `buttons.pin_map` | yes — see `gpioinfo` below |
+| Button A cycles Day → Week → Month | press it | yes |
+| Button B forces a refresh | press it, watch the journal | yes |
+| Buttons C and D do nothing (no crash, no log) | press them | yes |
 | Daily auto-refresh fires at `daily_time` | set a near-future time, wait | _fill in_ |
-| Service restarts after `sudo reboot` with no prompt | reboot | _fill in_ |
+| Service restarts after `sudo reboot` with no prompt | reboot | yes |
+
+`gpioinfo` from the bring-up Pi confirms the pin map — `inky` holds GPIO8/22/27
+(SPI DC/CS/reset) and GPIO17; `lg` (lgpio, via `gpiozero` for the buttons) holds
+GPIO5/6/16/24 with pull-ups and edge detection:
+
+```
+gpiochip0 - 58 lines:
+	line   5:	"GPIO5"         	input bias=pull-up edges=both consumer="lg"
+	line   6:	"GPIO6"         	input bias=pull-up edges=both consumer="lg"
+	line   8:	"GPIO8"         	output bias=disabled consumer="inky"
+	line  16:	"GPIO16"        	input bias=pull-up edges=both consumer="lg"
+	line  17:	"GPIO17"        	input bias=pull-up consumer="inky"
+	line  22:	"GPIO22"        	output bias=disabled consumer="inky"
+	line  24:	"GPIO24"        	input bias=pull-up edges=both consumer="lg"
+	line  27:	"GPIO27"        	output bias=disabled consumer="inky"
+	(all other gpiochip0 lines: input, unclaimed)
+
+gpiochip1 - 8 lines:
+	line   0:	"BT_ON"         	output consumer="shutdown"
+	line   2:	"PWR_LED_OFF"   	output active-low consumer="PWR"
+	line   6:	"SD_PWR_ON"     	output consumer="regulator-sd-vcc"
+	(gpiochip1 is the RP1 south bank — not used by this project)
+```
 
 ---
 
@@ -371,6 +395,11 @@ Run once on real hardware and record the results here:
 `journalctl -u eink-calendar.service -e`. If SPI is disabled you'll see a device
 error — re-run section 3. A blank panel with a healthy log usually means the
 cache is empty and the first fetch failed; see the auth items below.
+
+**Panel stays on the old image although init is clean (buttons work, no errors)**
+Known open issue as of the first v0.2.0 bring-up — `inky.auto()` succeeds and the
+service is healthy but the composited frame never reaches the panel. Tracked in
+**#100** (`persona/developer`). Not a config problem; nothing to change here yet.
 
 **`RuntimeError: No EEPROM detected!` in the log**
 `inky.auto()` reads the panel model over I2C and I2C is off, or the service user
