@@ -34,16 +34,28 @@ Replace `<owner>/<repo>` and the example paths with your own values.
 2. In the Imager's advanced options set the hostname, enable SSH, and configure Wi‑Fi / locale.
 3. Boot the Pi and SSH in.
 
-## 3. Enable SPI
+## 3. Enable SPI and I2C
 
-The Inky panel talks over SPI.
+The Inky panel is driven over SPI, and `inky.auto()` reads the panel's model
+from an EEPROM **over I2C** — both buses must be on (issue #88).
 
 ```bash
 sudo raspi-config nonint do_spi 0   # 0 = enable
+sudo raspi-config nonint do_i2c 0   # 0 = enable
+```
+
+Current `inky` (2.x) manages the SPI chip-select line itself via `gpiod` and
+aborts (`Chip Select: (line 8, GPIO8) currently claimed by spi0 CS0`) if the
+kernel SPI driver is holding it. Free GPIO7/8 by adding the no-chip-select
+overlay:
+
+```bash
+# append to /boot/firmware/config.txt, below the existing dtparam=spi=on
+echo 'dtoverlay=spi0-0cs' | sudo tee -a /boot/firmware/config.txt
 sudo reboot
 ```
 
-After reboot, confirm `/dev/spidev0.0` exists.
+After reboot, confirm **both** `/dev/spidev0.0` and `/dev/i2c-1` exist.
 
 ## 4. Create a dedicated service user
 
@@ -52,8 +64,11 @@ The calendar runs as its own non-sudo system user — never as `pi` or root
 
 ```bash
 sudo useradd --system --create-home --shell /usr/sbin/nologin eink-calendar
-sudo usermod -aG spi,gpio eink-calendar
+sudo usermod -aG spi,gpio,i2c eink-calendar
 ```
+
+The `i2c` group is what lets the service user read `/dev/i2c-1` for EEPROM
+detection (§3, issue #88).
 
 That user owns its own `~/.config/eink-calendar/` directory; secrets there are
 mode `0600` and `config.yaml` is `0640` (§6).
@@ -65,8 +80,8 @@ tarball and point `~eink-calendar/app` at it — no git checkout on the Pi.
 `scripts/deploy.sh code` (§10) automates exactly these steps for later updates.
 
 ```bash
-# pick the latest tag from https://github.com/<owner>/<repo>/releases
-VERSION=v0.1.0
+# set this to the latest tag from https://github.com/<owner>/<repo>/releases
+VERSION=vX.Y.Z
 sudo -u eink-calendar -H bash -c "
   cd ~ &&
   curl -fsSL https://github.com/<owner>/<repo>/archive/refs/tags/${VERSION}.tar.gz | tar xz &&
@@ -134,6 +149,19 @@ sudo -u eink-calendar -H bash -c "
 sudo -u eink-calendar -H nano ~eink-calendar/.config/eink-calendar/config.yaml
 ```
 
+**`config.example.yaml` ships dev defaults — the panel stays dark until you
+change them.** It sets `display.driver: mock` (renders to a PNG, never drives the
+Inky) and `display.mock_auto_open: true` (tries to `xdg-open` that PNG, which
+fails noisily on a headless Pi). Immediately after the copy, edit at minimum:
+
+- `display.driver: inky`
+- `display.mock_auto_open: false`
+- `refresh.timezone` — your IANA zone (e.g. `America/New_York`)
+- `accounts[].calendars` — your real calendar IDs and palette colours
+- `accounts[].credentials_file` / `token_file` — the paths set up in §7–§8
+
+The full field reference is below.
+
 File modes in this directory (`SECURITY.md` §5):
 
 | File | Mode |
@@ -149,7 +177,8 @@ names its own `credentials_file` / `token_file` (e.g. `personal_credentials.json
 
 Set at least:
 
-- `display.driver: inky`
+- `display.driver: inky` (the example ships `mock`)
+- `display.mock_auto_open: false` (the example ships `true`)
 - `display.resolution` — confirm against `inky.auto().resolution` during bring-up (section 11)
 - `refresh.daily_time` and `refresh.timezone` — when the daily auto-refresh runs
 - `accounts[].calendars[].color` — one of the six palette keys
@@ -272,7 +301,7 @@ scripts/deploy.sh secrets <pi-host>             # rsync local ~/.config/eink-cal
 scripts/deploy.sh all     <pi-host> [VERSION]   # secrets, then code
 ```
 
-`VERSION` is a release tag such as `v0.1.0`; omitted, it uses the newest tag in
+`VERSION` is a release tag such as `vX.Y.Z`; omitted, it uses the newest tag in
 your local checkout (`git describe --tags --abbrev=0`). No git checkout is needed
 on the Pi — only the §4–§7 setup (service user, `~/app` symlink, config dir) and
 passwordless-or-prompted `sudo` for the SSH user. `code` also apt-installs the
@@ -311,6 +340,9 @@ Run once on real hardware and record the results here:
 
 | Check | How | Result |
 |---|---|---|
+| `/dev/spidev0.0` and `/dev/i2c-1` both present | `ls -l /dev/spidev0.0 /dev/i2c-1` | _fill in_ |
+| Panel EEPROM visible on I2C | `i2cdetect -y 1` shows a device at `0x50` | _fill in_ |
+| App starts clean **as the service user** | `sudo -u eink-calendar -H ~eink-calendar/app/.venv/bin/python -m eink_calendar.app` (exercises SPI CS + I2C + lgpio inside the systemd sandbox constraints) | _fill in_ |
 | Panel detected | `python3 -c "from inky.auto import auto; print(auto().resolution)"` | _fill in_ |
 | `display.resolution` in config matches the line above | edit `config.yaml` | _fill in_ |
 | Panel actually refreshes with the composited image | watch after `systemctl start` | _fill in_ |
@@ -329,6 +361,17 @@ Run once on real hardware and record the results here:
 `journalctl -u eink-calendar.service -e`. If SPI is disabled you'll see a device
 error — re-run section 3. A blank panel with a healthy log usually means the
 cache is empty and the first fetch failed; see the auth items below.
+
+**`RuntimeError: No EEPROM detected!` in the log**
+`inky.auto()` reads the panel model over I2C and I2C is off, or the service user
+isn't in the `i2c` group. Re-run section 3 (`do_i2c 0`), confirm `/dev/i2c-1`
+and `i2cdetect -y 1` shows `0x50`, and check `groups eink-calendar` includes
+`i2c` (section 4).
+
+**`Chip Select: (line 8, GPIO8) currently claimed by spi0 CS0`**
+The kernel SPI driver is holding the chip-select line `inky` 2.x wants to manage
+itself. Add `dtoverlay=spi0-0cs` under `dtparam=spi=on` in
+`/boot/firmware/config.txt` and reboot (section 3).
 
 **Display froze on an old image**
 By design: a failed fetch keeps the last good render rather than blanking. Check
