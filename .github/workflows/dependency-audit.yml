@@ -1,0 +1,97 @@
+name: Dependency Audit
+
+# Supply-chain security gate for runtime dependencies (issue #68).
+#
+# Two independent jobs:
+#   pip-audit    — fails when an installed/declared dependency has a known
+#                  advisory (PyPI Advisory DB / OSV). Gates any PR that changes
+#                  a requirements file, every push to main/develop, and runs on
+#                  a weekly schedule so a newly disclosed CVE in an already
+#                  pinned dependency is surfaced even with no commits.
+#   pin-policy   — enforces that, once a hash-locked deploy manifest exists,
+#                  it stays hash-locked and the install paths use
+#                  `--require-hashes`. Until requirements.lock lands it only
+#                  emits a warning annotation (non-blocking) so unrelated PRs
+#                  are not held up while gitops-manager produces the lock.
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - requirements-base.txt
+      - requirements-pi.txt
+      - requirements-dev.txt
+      - requirements.lock
+      - scripts/deploy.sh
+      - .github/workflows/dependency-audit.yml
+  push:
+    branches: [main, develop]
+  schedule:
+    # Mondays 07:00 UTC — deliberate weekly review cadence for advisories.
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+jobs:
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: Audit runtime + dev requirements
+        # requirements-pi.txt is intentionally excluded: inky/gpiozero/lgpio/spidev
+        # are Pi-only wheels that do not resolve on ubuntu-latest. Their pinning is
+        # still enforced by the pin-policy job and the lock file.
+        run: |
+          if [ -f requirements.lock ]; then
+            echo "Auditing requirements.lock"
+            pip-audit --strict --require-hashes -r requirements.lock
+          else
+            echo "No requirements.lock yet — auditing loose requirement files (see #68)"
+            pip-audit --strict -r requirements-base.txt -r requirements-dev.txt
+          fi
+
+  pin-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enforce dependency pinning policy
+        run: |
+          set -euo pipefail
+
+          fail=0
+
+          if [ -f requirements.lock ]; then
+            echo "requirements.lock present — enforcing hash-lock policy"
+
+            if ! grep -q -- '--hash=' requirements.lock; then
+              echo "::error file=requirements.lock::requirements.lock has no --hash= entries; regenerate with 'pip-compile --generate-hashes' (or 'uv pip compile --generate-hashes')"
+              fail=1
+            fi
+
+            if grep -Eq '^[A-Za-z0-9._-]+\s*(>=|<=|>|<|~=|!=|\*)' requirements.lock; then
+              echo "::error file=requirements.lock::requirements.lock contains an unpinned or range specifier; every line must be '=='-pinned"
+              fail=1
+            fi
+
+            if [ -f scripts/deploy.sh ] && ! grep -q -- '--require-hashes' scripts/deploy.sh; then
+              echo "::error file=scripts/deploy.sh::install from requirements.lock must pass --require-hashes"
+              fail=1
+            fi
+
+            if [ -f docs/runbook.md ] && ! grep -q -- '--require-hashes' docs/runbook.md; then
+              echo "::error file=docs/runbook.md::runbook install step (§5) must install from requirements.lock with --require-hashes"
+              fail=1
+            fi
+          else
+            echo "::warning file=requirements-base.txt::Runtime dependencies are unpinned and there is no requirements.lock — an unattended device pulls arbitrary future releases (issue #68). This check will start enforcing --require-hashes once the lock lands."
+          fi
+
+          exit $fail

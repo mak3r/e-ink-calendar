@@ -17,6 +17,12 @@
 # in the spi,gpio groups, owning ~/app (a symlink to an extracted release) and
 # ~/.config/eink-calendar/.
 #
+# The `code` path enforces a supported Python range (3.11–3.13, issue #66),
+# apt-installs the build toolchain for the lgpio/spidev C extensions (needs the
+# SSH user to have passwordless sudo), and installs the runtime from the pinned,
+# hash-locked requirements.lock with `pip install --require-hashes`
+# (SECURITY.md §6, issue #68) — never from the loose requirements-*.txt.
+#
 # Usage:
 #   scripts/deploy.sh code    <pi-host> [VERSION]  # fetch release + reinstall + restart
 #   scripts/deploy.sh secrets <pi-host>            # rsync local ~/.config/eink-calendar/ to the Pi
@@ -84,6 +90,27 @@ deploy_code() {
     TARBALL="${tarball}" RELEASE_DIR="${dir}" \
     'bash -s' <<'REMOTE'
 set -euo pipefail
+
+# Supported Pi interpreters: Raspberry Pi OS Bookworm (3.11) .. Trixie (3.13).
+# Fail early and clearly instead of dying inside a swig build (issue #66).
+PYV="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+case "${PYV}" in
+  3.11|3.12|3.13) echo "==> Pi Python ${PYV}" ;;
+  *) echo "deploy: unsupported Pi Python ${PYV} (supported: 3.11-3.13)" >&2; exit 1 ;;
+esac
+
+# Build toolchain for lgpio/spidev: piwheels/PyPI ship no lgpio or spidev wheel
+# for cp313, so they build from their hash-verified sdists — swig + Python
+# headers are what the #66 failure was missing. numpy/Pillow install as wheels.
+if command -v apt-get >/dev/null 2>&1; then
+  echo "==> Ensuring lgpio/spidev build toolchain"
+  sudo apt-get update -qq
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    swig python3-dev build-essential libopenjp2-7
+else
+  echo "deploy: apt-get not found — install swig + Python headers yourself" >&2
+fi
+
 sudo -u "${SERVICE_USER}" -H \
   TARBALL="${TARBALL}" RELEASE_DIR="${RELEASE_DIR}" \
   bash -c '
@@ -95,9 +122,15 @@ sudo -u "${SERVICE_USER}" -H \
     ln -sfn "${RELEASE_DIR}" app
     cd app
     mkdir -p data
+    # Plain venv — the runtime is reproduced exactly from the hash-locked
+    # manifest, not borrowed from system site-packages.
     [ -d .venv ] || python3 -m venv .venv
-    if [ -f requirements-pi.txt ]; then
-      .venv/bin/pip install --quiet --upgrade -r requirements-pi.txt
+    if [ -f requirements.lock ]; then
+      # SECURITY.md §6: hash-verified install, never the loose requirements-*.txt.
+      .venv/bin/pip install --quiet --require-hashes -r requirements.lock
+    elif [ -f requirements-pi.txt ]; then
+      # Fallback for releases cut before requirements.lock existed.
+      .venv/bin/pip install --quiet -r requirements-pi.txt
     fi
   '
 sudo systemctl restart "${SERVICE}.service"
