@@ -311,16 +311,89 @@ Run once on real hardware and record the results here:
 
 | Check | How | Result |
 |---|---|---|
-| Panel detected | `python3 -c "from inky.auto import auto; print(auto().resolution)"` | _fill in_ |
-| `display.resolution` in config matches the line above | edit `config.yaml` | _fill in_ |
-| Panel actually refreshes with the composited image | watch after `systemctl start` | _fill in_ |
-| Button pin map matches [Pimoroni's current pinout](https://learn.pimoroni.com/) | compare to `buttons.pin_map` | _fill in_ |
-| Button A cycles Day → Week → Month | press it | _fill in_ |
-| Button B forces a refresh | press it, watch the journal | _fill in_ |
-| Buttons C and D do nothing (no crash, no log) | press them | _fill in_ |
+| Panel detected | `sudo -u eink-calendar -H bash -c '~/app/.venv/bin/python -c "from inky.auto import auto; print(auto().resolution)"'` | (800, 480) |
+| `display.resolution` in config matches the line above | edit `config.yaml` | yes |
+| Panel actually refreshes with the composited image | watch after `systemctl start` | no |
+| Button pin map matches [Pimoroni's current pinout](https://learn.pimoroni.com/) | compare to `buttons.pin_map` | see table below |
+| Button A cycles Day → Week → Month | press it | yes |
+| Button B forces a refresh | press it, watch the journal | yes|
+| Buttons C and D do nothing (no crash, no log) | press them | yes |
 | Daily auto-refresh fires at `daily_time` | set a near-future time, wait | _fill in_ |
-| Service restarts after `sudo reboot` with no prompt | reboot | _fill in_ |
+| Service restarts after `sudo reboot` with no prompt | reboot | yes |
 
+```
+gpioinfo 
+gpiochip0 - 58 lines:
+	line   0:	"ID_SDA"        	input
+	line   1:	"ID_SCL"        	input
+	line   2:	"GPIO2"         	input
+	line   3:	"GPIO3"         	input
+	line   4:	"GPIO4"         	input
+	line   5:	"GPIO5"         	input bias=pull-up edges=both consumer="lg"
+	line   6:	"GPIO6"         	input bias=pull-up edges=both consumer="lg"
+	line   7:	"GPIO7"         	input
+	line   8:	"GPIO8"         	output bias=disabled consumer="inky"
+	line   9:	"GPIO9"         	input
+	line  10:	"GPIO10"        	input
+	line  11:	"GPIO11"        	input
+	line  12:	"GPIO12"        	input
+	line  13:	"GPIO13"        	input
+	line  14:	"GPIO14"        	input
+	line  15:	"GPIO15"        	input
+	line  16:	"GPIO16"        	input bias=pull-up edges=both consumer="lg"
+	line  17:	"GPIO17"        	input bias=pull-up consumer="inky"
+	line  18:	"GPIO18"        	input
+	line  19:	"GPIO19"        	input
+	line  20:	"GPIO20"        	input
+	line  21:	"GPIO21"        	input
+	line  22:	"GPIO22"        	output bias=disabled consumer="inky"
+	line  23:	"GPIO23"        	input
+	line  24:	"GPIO24"        	input bias=pull-up edges=both consumer="lg"
+	line  25:	"GPIO25"        	input
+	line  26:	"GPIO26"        	input
+	line  27:	"GPIO27"        	output bias=disabled consumer="inky"
+	line  28:	"RGMII_MDIO"    	input
+	line  29:	"RGMIO_MDC"     	input
+	line  30:	"CTS0"          	input
+	line  31:	"RTS0"          	input
+	line  32:	"TXD0"          	input
+	line  33:	"RXD0"          	input
+	line  34:	"SD1_CLK"       	input
+	line  35:	"SD1_CMD"       	input
+	line  36:	"SD1_DATA0"     	input
+	line  37:	"SD1_DATA1"     	input
+	line  38:	"SD1_DATA2"     	input
+	line  39:	"SD1_DATA3"     	input
+	line  40:	"PWM0_MISO"     	input
+	line  41:	"PWM1_MOSI"     	input
+	line  42:	"STATUS_LED_G_CLK"	output consumer="ACT"
+	line  43:	"SPIFLASH_CE_N" 	input
+	line  44:	"SDA0"          	input
+	line  45:	"SCL0"          	input
+	line  46:	"RGMII_RXCLK"   	input
+	line  47:	"RGMII_RXCTL"   	input
+	line  48:	"RGMII_RXD0"    	input
+	line  49:	"RGMII_RXD1"    	input
+	line  50:	"RGMII_RXD2"    	input
+	line  51:	"RGMII_RXD3"    	input
+	line  52:	"RGMII_TXCLK"   	input
+	line  53:	"RGMII_TXCTL"   	input
+	line  54:	"RGMII_TXD0"    	input
+	line  55:	"RGMII_TXD1"    	input
+	line  56:	"RGMII_TXD2"    	input
+	line  57:	"RGMII_TXD3"    	input
+```
+```
+gpiochip1 - 8 lines:
+	line   0:	"BT_ON"         	output consumer="shutdown"
+	line   1:	"WL_ON"         	output
+	line   2:	"PWR_LED_OFF"   	output active-low consumer="PWR"
+	line   3:	"GLOBAL_RESET"  	output
+	line   4:	"VDD_SD_IO_SEL" 	output consumer="vdd-sd-io"
+	line   5:	"CAM_GPIO"      	output consumer="regulator-cam1"
+	line   6:	"SD_PWR_ON"     	output consumer="regulator-sd-vcc"
+	line   7:	"SD_OC_N"       	input
+```
 ---
 
 ## 12. Troubleshooting
