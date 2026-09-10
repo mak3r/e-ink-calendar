@@ -9,8 +9,10 @@ Replace `<owner>/<repo>` and the example paths with your own values.
 
 > **Status:** Cross-checked against the merged `SECURITY.md` (#4),
 > `scripts/setup_oauth.py` (#14), `systemd/eink-calendar.service`,
-> `scripts/deploy.sh`, and `scripts/pull_preview.sh` (#15). §11 (hardware
-> bring-up) still needs one pass on real hardware.
+> `scripts/deploy.sh`, and `scripts/pull_preview.sh` (#15). §2/§5 mirror the
+> Python-3.13 dependency handling in `scripts/deploy.sh` from PR #69 (#66) —
+> **merge #69 before this one.** §11 (hardware bring-up) still needs one pass on
+> real hardware.
 
 ---
 
@@ -26,7 +28,10 @@ Replace `<owner>/<repo>` and the example paths with your own values.
 
 ## 2. Flash Raspberry Pi OS
 
-1. Install **Raspberry Pi OS (Bookworm)**, 64-bit, with Raspberry Pi Imager.
+1. Install **Raspberry Pi OS**, 64-bit, with Raspberry Pi Imager. Supported
+   images run **Python 3.11 (Bookworm) through 3.13 (Trixie-era)** — CI gates
+   every release on both ends of that range (issue #66). Newer or older
+   interpreters are unsupported; `scripts/deploy.sh` refuses them outright.
 2. In the Imager's advanced options set the hostname, enable SSH, and configure Wi‑Fi / locale.
 3. Boot the Pi and SSH in.
 
@@ -62,7 +67,7 @@ tarball and point `~eink-calendar/app` at it — no git checkout on the Pi.
 
 ```bash
 # pick the latest tag from https://github.com/<owner>/<repo>/releases
-VERSION=v1.0.0
+VERSION=v0.1.0
 sudo -u eink-calendar -H bash -c "
   cd ~ &&
   curl -fsSL https://github.com/<owner>/<repo>/archive/refs/tags/${VERSION}.tar.gz | tar xz &&
@@ -74,15 +79,32 @@ sudo -u eink-calendar -H bash -c "
 just extracts the new release and repoints the symlink, and the systemd unit
 resolves it afresh on every restart.
 
-Install the Pi runtime dependencies (the Pi-only set — GPIO + Inky libraries):
+**Install the Pi dependency packages first.** piwheels publishes no `lgpio` /
+`spidev` wheels for Python 3.13, so pip would otherwise try to compile them from
+source and fail with an opaque `swig: No such file or directory` /
+`Python.h: No such file or directory` (issue #66). Install the distro builds
+instead — `scripts/deploy.sh code` runs this exact `apt-get` line:
+
+```bash
+sudo apt-get update
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+  python3-lgpio python3-spidev python3-numpy python3-pil python3-gpiozero \
+  swig python3-dev build-essential libopenjp2-7
+```
+
+Then create the venv **with `--system-site-packages`** so those apt-installed
+extensions satisfy pip and it never falls back to a source build:
 
 ```bash
 sudo -u eink-calendar -H bash -c "
   cd ~/app &&
-  python3 -m venv .venv &&
+  python3 -m venv --system-site-packages .venv &&
   .venv/bin/pip install -r requirements-pi.txt
 "
 ```
+
+(No `--upgrade` on that `pip install` — it would pull newer PyPI copies over the
+already-satisfied system packages and re-trigger the source build.)
 
 ## 6. Configure
 
@@ -247,10 +269,12 @@ scripts/deploy.sh secrets <pi-host>             # rsync local ~/.config/eink-cal
 scripts/deploy.sh all     <pi-host> [VERSION]   # secrets, then code
 ```
 
-`VERSION` is a release tag such as `v1.0.0`; omitted, it uses the newest tag in
+`VERSION` is a release tag such as `v0.1.0`; omitted, it uses the newest tag in
 your local checkout (`git describe --tags --abbrev=0`). No git checkout is needed
 on the Pi — only the §4–§7 setup (service user, `~/app` symlink, config dir) and
-passwordless-or-prompted `sudo` for the SSH user.
+passwordless-or-prompted `sudo` for the SSH user. `code` also apt-installs the Pi
+dependency packages and rejects an unsupported Python (outside 3.11–3.13) before
+touching the venv — the same steps §5 lists by hand.
 
 Secrets under `~eink-calendar/.config/eink-calendar/` are **never** touched by
 the `code` path — only the explicit `secrets` subcommand syncs them, and only
