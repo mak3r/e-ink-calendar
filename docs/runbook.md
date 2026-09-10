@@ -135,6 +135,22 @@ There is no `$XDG_CONFIG_HOME` handling. Running as the `eink-calendar` user,
 path 2 resolves to `/home/eink-calendar/.config/eink-calendar/config.yaml`, so
 no environment variable is needed on the Pi.
 
+### This device's `config.yaml` is authored on the Pi
+
+The Pi's `config.yaml` is written here, by hand, and is the **single source of
+truth for this device**. `deploy.sh` never reads, writes, or deletes it —
+`deploy.sh secrets` syncs credential/token files only (§10, §13). The dev Mac
+keeps its own separate `config.yaml`. This is deliberate for a
+two-environment, single-operator project (`architecture.md` "Per-environment
+config", issue #110).
+
+Two classes of key:
+
+| | Keys | Rule |
+|---|---|---|
+| **Environment-specific** | `display.driver`, `display.resolution`, `display.output_path`, `display.mock_auto_open`, `buttons.pin_map` | Legitimately differ per machine — set them per device and leave them. |
+| **Shared** | `accounts`, `refresh`, `view`, `buttons.bindings`, `cache.path` | Must stay identical on both machines or they render different calendars. When one changes (e.g. adding a calendar), **edit both** the dev and the Pi `config.yaml` by hand. `config.example.yaml` marks each key. |
+
 ```bash
 sudo -u eink-calendar -H bash -c "
   mkdir -p ~/.config/eink-calendar &&
@@ -175,6 +191,15 @@ Set at least:
 - `display.driver: inky` (the example ships `mock`)
 - `display.mock_auto_open: false` (the example ships `true`)
 - `display.resolution` — confirm against `inky.auto().resolution` during bring-up (section 11)
+- `display.output_path` — where the last composited frame is archived (and what
+  `pull_preview.sh` fetches, §10). A **relative** value is anchored to the
+  process working directory: under systemd that is `WorkingDirectory=~/app`, so
+  the default `data/last_render.png` lands at
+  `/home/eink-calendar/app/data/last_render.png` — the path the systemd unit's
+  `ReadWritePaths` and `pull_preview.sh`'s default both already expect. Leave it
+  at the default unless you have a reason not to; if you set an absolute path,
+  keep it **outside** `~/.config/eink-calendar/` (so `deploy.sh secrets`'
+  `rsync --delete` can't touch it) and add it to the unit's `ReadWritePaths`.
 - `refresh.daily_time` and `refresh.timezone` — when the daily auto-refresh runs
 - `accounts[].calendars[].color` — one of the six palette keys
   (`black`, `white`, `red`, `yellow`, `blue`, `green`), never a raw hex value
@@ -319,16 +344,27 @@ default SSH user and, if that's wrong, fails with `Permission denied
 sudo **password prompt works** (issue #82); passwordless (`NOPASSWD`) sudo is
 fine too but not required.
 
-Secrets under `~eink-calendar/.config/eink-calendar/` are **never** touched by
-the `code` path — only the explicit `secrets` subcommand syncs them, and only
-when they actually change. Point the revoke/rotate procedure (§13) at
-`deploy.sh secrets` for pushing rotated tokens.
+Neither path touches the Pi's `config.yaml`. The `code` path doesn't go near
+`~/.config/eink-calendar/` at all; `deploy.sh secrets` syncs **only**
+`*_credentials.json` / `*_token.json` (an rsync allowlist, `--delete` guarded by
+the same filter — issue #109), so `config.yaml`, `cache.json` and other Pi-local
+state are never synced or pruned. `config.yaml` is authored on the Pi (§6);
+point the revoke/rotate procedure (§13) at `deploy.sh secrets` for pushing
+rotated tokens.
 
 Environment overrides (all optional): `EINK_SERVICE_USER` (default
 `eink-calendar`), `EINK_HOME` (default `/home/<service user>`), `EINK_SERVICE`
 (default `eink-calendar`), `EINK_CONFIG_DIR` (default `$HOME/.config/eink-calendar`
 — the *local* rsync source), `EINK_REPO_SLUG` (default: parsed from `origin`),
 `EINK_SSH_USER` (the sudo-capable login user, **not** the service user).
+
+### Upgrading a Pi from a pre-0.3.0 release
+
+v0.3.0 replaced `display.mock_output_path` with `display.output_path` (§6). A
+config left from an older release keeps working — the app logs a one-line
+warning and archives to the default `data/last_render.png` — but rename the key
+in the Pi's `config.yaml` to silence it, or just delete it if the default path
+is fine.
 
 ### Previewing the current screen
 
@@ -461,9 +497,10 @@ showing its last render and log `invalid_grant` on the next refresh.
 ### How to reissue after revoking
 
 1. Re-run the one-time consent for each account (section 8), then push the
-   refreshed config dir to the Pi with `scripts/deploy.sh secrets <pi-host>`
-   (or `scp` the individual token files). The dead `*_token.json` were already
-   removed in "How to revoke" step 5.
+   refreshed credential/token files with `scripts/deploy.sh secrets <pi-host>`
+   (or `scp` them individually). `secrets` syncs only `*_credentials.json` /
+   `*_token.json` — it does **not** touch the Pi's `config.yaml` (§6, §10). The
+   dead `*_token.json` were already removed in "How to revoke" step 5.
 2. Restart the service:
    ```bash
    sudo systemctl restart eink-calendar.service
