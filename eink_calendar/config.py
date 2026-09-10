@@ -13,6 +13,7 @@ startup instead of rendering nothing.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -20,6 +21,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+log = logging.getLogger("eink_calendar")
 
 __all__ = [
     "PALETTE_COLORS",
@@ -161,7 +164,7 @@ def _resolve_path(path: str | os.PathLike[str] | None) -> Path:
 
 def _build_app_config(data: dict[str, Any], source: Path) -> AppConfig:
     return AppConfig(
-        display=_build_display(_section(data, "display", source), source),
+        display=_build_display(_section(data, "display", source)),
         refresh=_build_refresh(_section(data, "refresh", source)),
         view=_build_view(_section(data, "view", source)),
         buttons=_build_buttons(_section(data, "buttons", source)),
@@ -186,7 +189,7 @@ def _require(section: dict[str, Any], key: str, section_name: str) -> Any:
     return section[key]
 
 
-def _build_display(section: dict[str, Any], source: Path) -> DisplayConfig:
+def _build_display(section: dict[str, Any]) -> DisplayConfig:
     driver = _require(section, "driver", "display")
     if driver not in _VALID_DRIVERS:
         raise ConfigError(
@@ -205,27 +208,38 @@ def _build_display(section: dict[str, Any], source: Path) -> DisplayConfig:
 
     return DisplayConfig(
         driver=driver,
-        output_path=_resolve_output_path(section, source),
+        output_path=_resolve_output_path(section),
         mock_auto_open=bool(section.get("mock_auto_open", False)),
         resolution=(int(resolution_raw[0]), int(resolution_raw[1])),
     )
 
 
-def _resolve_output_path(section: dict[str, Any], source: Path) -> Path:
+def _resolve_output_path(section: dict[str, Any]) -> Path:
     """Absolute path where both drivers archive the last composited frame.
 
     ``display.output_path`` may be absolute (used as-is) or relative, in which
-    case it is anchored to the config file's directory — never ``os.getcwd()``,
-    which under systemd is a symlinked ``WorkingDirectory`` inside a mount
-    namespace and cannot be relied on. Defaults to ``data/last_render.png``
-    beside the config file. (The pre-0.3 ``mock_output_path`` key was never
-    wired to anything and is ignored.)
+    case it is anchored to the **working directory**. That is what makes the
+    default (``data/last_render.png``) land in the right place everywhere:
+    under systemd ``WorkingDirectory`` is the ``~/app`` checkout, so it becomes
+    ``~/app/data/last_render.png`` — the path ``scripts/pull_preview.sh``, the
+    systemd unit's ``ReadWritePaths`` and ``docs/runbook.md`` all already
+    assume — and in the Mac dev loop, run from the repo root, it is
+    ``<repo>/data/last_render.png``.
+
+    The pre-0.3 ``mock_output_path`` key is obsolete; if it is present without
+    ``output_path`` we warn with a migration hint rather than silently ignoring
+    it (issue #105).
     """
     raw = section.get("output_path")
+    if raw is None and section.get("mock_output_path") is not None:
+        log.warning(
+            "config: 'display.mock_output_path' is obsolete (removed in v0.3) — "
+            "rename it to 'display.output_path'. Ignoring it; archiving to the "
+            "default 'data/last_render.png' instead."
+        )
+
     candidate = Path(str(raw) if raw else "data/last_render.png").expanduser()
     if not candidate.is_absolute():
-        candidate = source.parent / candidate
-    if not candidate.is_absolute():  # source itself was relative (dev fallback)
         candidate = Path.cwd() / candidate
     # normpath (not resolve): collapse '..' without dereferencing the ~/app
     # release symlink, so the archived path stays stable across deploys.
