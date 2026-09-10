@@ -7,11 +7,11 @@ Month views.
 This guide is generic and public — it assumes no prior context on the project.
 Replace `<owner>/<repo>` and the example paths with your own values.
 
-> **Status:** Cross-checked against the merged `SECURITY.md` (#4),
-> `scripts/setup_oauth.py` (#14), and the #15/#66 infra. §5 installs from the
-> merged hash-locked `requirements.lock` (`--require-hashes`), mirroring
-> `scripts/deploy.sh` (#68/#73). §11 (hardware bring-up) still needs one pass on
-> real hardware.
+> **Status:** Cross-checked against the merged infra from the v0.2.0 Pi bring-up
+> cluster — `scripts/install.sh` (#81), `scripts/deploy.sh` / `ssh -tt` sudo
+> (#82), `liblgpio-dev` (#85), the `data/` + `LG_WD` systemd fixes (#86), SPI/I2C
+> (#88) — plus `SECURITY.md` (#4) and `setup_oauth.py` (#14). §11 (hardware
+> bring-up) still needs a full pass on real hardware.
 
 ---
 
@@ -93,32 +93,27 @@ sudo -u eink-calendar -H bash -c "
 just extracts the new release and repoints the symlink, and the systemd unit
 resolves it afresh on every restart.
 
-**Install the lgpio/spidev build toolchain first.** Neither piwheels nor PyPI
-ships an `lgpio` or `spidev` wheel for Python 3.13, so they build from their
-(hash-verified) sdists on the Pi; without `swig` and the Python headers that
-fails with an opaque `swig: No such file or directory` /
-`Python.h: No such file or directory` (issue #66). `scripts/deploy.sh code` runs
-this exact line:
+Then run the release's own installer — **the one and only install step**
+(`scripts/install.sh`, issue #81). `scripts/deploy.sh code` (§10) runs this exact
+script over SSH, so a first install and every later update go through identical
+steps:
 
 ```bash
-sudo apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  swig python3-dev build-essential libopenjp2-7
+cd ~eink-calendar/app && sudo ./scripts/install.sh
 ```
 
-Then create a plain venv and install the runtime from the pinned, hash-locked
-`requirements.lock` — **`--require-hashes`, never the loose `requirements-*.txt`**
-(`SECURITY.md` §6, issue #68). `requirements.lock` is `==`-pinned with `--hash=`
-lines for every transitive dependency; a plain venv reproduces it exactly rather
-than borrowing anything from system site-packages:
+`install.sh` is idempotent and, as root:
 
-```bash
-sudo -u eink-calendar -H bash -c "
-  cd ~/app &&
-  python3 -m venv .venv &&
-  .venv/bin/pip install --require-hashes -r requirements.lock
-"
-```
+- guards the Python version (3.11–3.13, issue #66)
+- `apt-get install`s the lgpio/spidev build toolchain —
+  `swig python3-dev build-essential libopenjp2-7 liblgpio-dev`. Neither piwheels
+  nor PyPI ships an `lgpio`/`spidev` wheel for Python 3.13, so they build from
+  their hash-verified sdists; `swig` + headers get the compile through (#66) and
+  `liblgpio-dev` provides the `-llgpio` the extension links against (#85).
+- as the service user: `mkdir -p data`, creates a plain venv, and
+  `pip install --require-hashes -r requirements.lock` — **hash-verified, never
+  the loose `requirements-*.txt`** (`SECURITY.md` §6, issue #68). It falls back
+  to `requirements-pi.txt` only for releases cut before the lock existed.
 
 (`requirements-base.txt` / `requirements-pi.txt` are the human-edited inputs;
 regenerate the lock with `uv pip compile --universal --generate-hashes
@@ -268,16 +263,26 @@ authoritative. Key settings:
   `ExecStart=…/app/.venv/bin/python -m eink_calendar.app`
 - `Environment=EINK_CALENDAR_CONFIG=/home/eink-calendar/.config/eink-calendar/config.yaml`
   — set explicitly so config resolution (§6) does not depend on `HOME`
+- `Environment=LG_WD=/tmp` — lgpio's `lg` library drops a `.lgd-nfy*` FIFO in
+  CWD, which is the read-only release tree under `ProtectSystem=strict`; without
+  this, lgpio init fails and `gpiozero` silently falls back to a missing pin
+  factory (issue #86, confirmed on hardware)
+- `Environment=GPIOZERO_PIN_FACTORY=lgpio` — fail loudly instead of falling back
+- `ExecStartPre=+/bin/mkdir -p …/app/data` and `+/bin/chown` — the unit creates
+  and owns the render-archive dir on the host before the sandbox binds it RW
+  (`ReadWritePaths` does not create missing dirs). This is why a hand-followed
+  §5 no longer needs a separate `mkdir` (issue #87); `install.sh` also creates it.
 - `Restart=on-failure`, `RestartSec=5`, `After=/Wants=network-online.target`,
   `WantedBy=multi-user.target` — it comes back on its own after a reboot or a
   transient crash
 - Hardening (`SECURITY.md` §5): `UMask=0077` (so `data/last_render.png` — a
   picture of the family calendar — is not world-readable), `NoNewPrivileges=true`,
   `ProtectSystem=strict`, `ProtectHome=read-only` with
-  `ReadWritePaths=-/home/eink-calendar/app/data /home/eink-calendar/.config/eink-calendar`
-  (the leading `-` tolerates the release-relative `data/` dir not existing yet),
-  `PrivateTmp=true`, plus `ProtectKernelTunables/Modules`, `ProtectControlGroups`,
-  `RestrictRealtime`, `RestrictSUIDSGID`, `LockPersonality`
+  `ReadWritePaths=/home/eink-calendar/app/data /home/eink-calendar/.config/eink-calendar`
+  (no `-` tolerance — the `ExecStartPre` guarantees `data/` exists, so a bind
+  failure should stop the unit loudly), `PrivateTmp=true`, plus
+  `ProtectKernelTunables/Modules`, `ProtectControlGroups`, `RestrictRealtime`,
+  `RestrictSUIDSGID`, `LockPersonality`
 - SPI/GPIO device access is left at the default policy pending hardware bring-up
   (§11); tightening to `DevicePolicy=closed` needs the real panel to verify
 
@@ -292,22 +297,27 @@ Within a few seconds the panel should show the default view.
 
 ## 10. Deploying updates
 
-`scripts/deploy.sh` is release-based — it does the same tarball-and-symlink dance
-as §5, over SSH. Three subcommands:
+`scripts/deploy.sh` is release-based — it fetches the release tarball, repoints
+`~eink-calendar/app`, runs the release's own `scripts/install.sh` (the §5
+installer), and restarts the service, all over SSH. Three subcommands:
 
 ```bash
-scripts/deploy.sh code    <pi-host> [VERSION]   # fetch release tarball → repoint ~/app → hash-locked reinstall → restart
-scripts/deploy.sh secrets <pi-host>             # rsync local ~/.config/eink-calendar/ → Pi (dir 0700 / files 0600 enforced)
-scripts/deploy.sh all     <pi-host> [VERSION]   # secrets, then code
+scripts/deploy.sh code    [user@]<pi-host> [VERSION]   # fetch release → repoint ~/app → run install.sh → restart
+scripts/deploy.sh secrets [user@]<pi-host>             # rsync local ~/.config/eink-calendar/ → Pi (dir 0700 / files 0600 enforced)
+scripts/deploy.sh all     [user@]<pi-host> [VERSION]   # secrets, then code
 ```
 
 `VERSION` is a release tag such as `vX.Y.Z`; omitted, it uses the newest tag in
 your local checkout (`git describe --tags --abbrev=0`). No git checkout is needed
-on the Pi — only the §4–§7 setup (service user, `~/app` symlink, config dir) and
-passwordless-or-prompted `sudo` for the SSH user. `code` also apt-installs the
-lgpio/spidev build toolchain, rejects an unsupported Python (outside 3.11–3.13),
-and installs from `requirements.lock` with `--require-hashes` — the same steps §5
-lists by hand.
+on the Pi — only the §4–§7 setup (service user, `~/app` symlink, config dir).
+
+**The SSH login user is a normal sudo-capable account — never the
+`eink-calendar` service user** (which has no login shell). Give the target as
+`user@pi-host` or set `EINK_SSH_USER`; a bare hostname connects as the host's
+default SSH user and, if that's wrong, fails with `Permission denied
+(publickey)`. That user needs `sudo` — the script runs `ssh -tt` so an ordinary
+sudo **password prompt works** (issue #82); passwordless (`NOPASSWD`) sudo is
+fine too but not required.
 
 Secrets under `~eink-calendar/.config/eink-calendar/` are **never** touched by
 the `code` path — only the explicit `secrets` subcommand syncs them, and only
@@ -318,7 +328,7 @@ Environment overrides (all optional): `EINK_SERVICE_USER` (default
 `eink-calendar`), `EINK_HOME` (default `/home/<service user>`), `EINK_SERVICE`
 (default `eink-calendar`), `EINK_CONFIG_DIR` (default `$HOME/.config/eink-calendar`
 — the *local* rsync source), `EINK_REPO_SLUG` (default: parsed from `origin`),
-`EINK_SSH_USER`.
+`EINK_SSH_USER` (the sudo-capable login user, **not** the service user).
 
 ### Previewing the current screen
 
