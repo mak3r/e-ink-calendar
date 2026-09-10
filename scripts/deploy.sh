@@ -132,21 +132,31 @@ deploy_secrets() {
   [ -d "${CONFIG_DIR}" ] || die "local config dir not found: ${CONFIG_DIR}"
 
   local stage="/tmp/eink-secrets-$$"
-  echo "==> Staging secrets ${CONFIG_DIR}/ -> ${target}:${stage}/"
+  echo "==> Staging credential/token files ${CONFIG_DIR}/ -> ${target}:${stage}/"
+  # Only credential/token files are pushed. config.yaml is authored ON the Pi
+  # (docs/runbook.md §6) — the dev machine's is `driver: mock` and would blank
+  # the panel — and anything else the service writes under
+  # ~/.config/eink-calendar/ (cache.json, …) is Pi-local. The same filter guards
+  # `--delete` on both legs, so it only prunes stale credential/token files,
+  # never config.yaml or Pi-local state (issue #109).
   # Trailing slash on source: copy contents, not the dir itself.
-  rsync -az --delete --chmod=D700,F600 "${CONFIG_DIR}/" "${target}:${stage}/"
+  rsync -az --delete \
+    --include='*_credentials.json' --include='*_token.json' --exclude='*' \
+    --chmod=D700,F600 "${CONFIG_DIR}/" "${target}:${stage}/"
 
   echo "==> Installing into ${SERVICE_HOME}/.config/eink-calendar/ as ${SERVICE_USER}"
   # -tt so `sudo` can prompt for a password (issue #82).
   ssh -tt "${target}" STAGE="${stage}" SERVICE_USER="${SERVICE_USER}" 'bash -s' <<'REMOTE'
 set -euo pipefail
+trap 'rm -rf "${STAGE}"' EXIT
 DEST="$(getent passwd "${SERVICE_USER}" | cut -d: -f6)/.config/eink-calendar"
 sudo install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" -m 700 "${DEST}"
-sudo rsync -a --delete --chown="${SERVICE_USER}:${SERVICE_USER}" "${STAGE}/" "${DEST}/"
-sudo find "${DEST}" -type f -exec chmod 600 {} +
-rm -rf "${STAGE}"
+sudo rsync -a --delete \
+  --include='*_credentials.json' --include='*_token.json' --exclude='*' \
+  --chown="${SERVICE_USER}:${SERVICE_USER}" "${STAGE}/" "${DEST}/"
+sudo find "${DEST}" -maxdepth 1 -type f \( -name '*_credentials.json' -o -name '*_token.json' \) -exec chmod 600 {} +
 REMOTE
-  echo "==> Secrets sync complete (never committed to git)"
+  echo "==> Secrets sync complete (credential/token files only; config.yaml untouched)"
 }
 
 main() {

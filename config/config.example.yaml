@@ -1,32 +1,37 @@
 # Copy this file to config/config.yaml (or a location outside the repo checkout,
 # e.g. ~/.config/eink-calendar/config.yaml — see docs/architecture.md) and fill
 # in real values. config.yaml itself is gitignored and must never be committed.
+#
+# The dev Mac and the Pi each keep their OWN config.yaml — see the
+# "Per-environment config" section of docs/architecture.md. Every key below is
+# marked:
+#   # ENV-SPECIFIC            — expected to differ between dev and Pi
+#   # SHARED — keep identical  — must be kept in sync by hand across both
 
 display:
-  driver: mock            # "inky" | "mock"
-  # Where every rendered frame is archived (both drivers) for pull_preview.sh
-  # and design review. A relative path is resolved against THIS file's
-  # directory, never the process CWD. On the Pi, systemd's WorkingDirectory is
-  # a symlinked release dir inside a mount namespace, so set an absolute path
-  # that stays put across deploys, e.g.:
-  #   output_path: "/home/eink-calendar/app/data/last_render.png"
-  output_path: "../data/last_render.png"
-  mock_auto_open: true
-  resolution: [800, 480]   # confirm against inky.auto().resolution during Pi bring-up
+  driver: mock            # ENV-SPECIFIC  ("inky" on the Pi, "mock" on the dev Mac)
+  # ENV-SPECIFIC. Where every rendered frame is archived (both drivers) for
+  # pull_preview.sh and design review. A relative path is resolved against the
+  # working directory: in the dev loop that's the repo root (-> <repo>/data/),
+  # and under systemd it's the ~/app checkout (-> ~/app/data/, which is what
+  # pull_preview.sh and the runbook expect). Set an absolute path to override.
+  output_path: "data/last_render.png"
+  mock_auto_open: true     # ENV-SPECIFIC  (no effect under the "inky" driver)
+  resolution: [800, 480]   # ENV-SPECIFIC  (confirm against inky.auto().resolution during Pi bring-up)
 
-refresh:
+refresh:                   # SHARED — keep identical
   daily_time: "05:30"
   timezone: "America/New_York"
 
-view:
+view:                      # SHARED — keep identical
   default: day
   week_starts_on: monday
 
 buttons:
-  pin_map: {A: 5, B: 6, C: 16, D: 24}   # confirm against Pimoroni's current pinout docs during Pi bring-up
-  bindings: {A: cycle_view, B: force_refresh, C: noop, D: noop}  # D reserved for future settings menu
+  pin_map: {A: 5, B: 6, C: 16, D: 24}   # ENV-SPECIFIC  (confirm against Pimoroni's current pinout docs during Pi bring-up)
+  bindings: {A: cycle_view, B: force_refresh, C: noop, D: noop}  # SHARED — keep identical  (D reserved for future settings menu)
 
-accounts:
+accounts:                  # SHARED — keep identical
   - name: personal
     credentials_file: "~/.config/eink-calendar/personal_credentials.json"
     token_file: "~/.config/eink-calendar/personal_token.json"
@@ -36,4 +41,4 @@ accounts:
   # a second `accounts` entry is how a future second Google account gets added — no code change needed
 
 cache:
-  path: "data/cache.json"
+  path: "data/cache.json"  # SHARED — keep identical
