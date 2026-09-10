@@ -8,11 +8,10 @@ This guide is generic and public — it assumes no prior context on the project.
 Replace `<owner>/<repo>` and the example paths with your own values.
 
 > **Status:** Cross-checked against the merged `SECURITY.md` (#4),
-> `scripts/setup_oauth.py` (#14), `systemd/eink-calendar.service`,
-> `scripts/deploy.sh`, and `scripts/pull_preview.sh` (#15). §2/§5 mirror the
-> Python-3.13 dependency handling in `scripts/deploy.sh` from PR #69 (#66) —
-> **merge #69 before this one.** §11 (hardware bring-up) still needs one pass on
-> real hardware.
+> `scripts/setup_oauth.py` (#14), and the #15/#66 infra. §5 installs from the
+> hash-locked `requirements.lock` (`--require-hashes`), mirroring
+> `scripts/deploy.sh` in PR #74 (#68/#73) — **merge #74 before this one.** §11
+> (hardware bring-up) still needs one pass on real hardware.
 
 ---
 
@@ -79,32 +78,36 @@ sudo -u eink-calendar -H bash -c "
 just extracts the new release and repoints the symlink, and the systemd unit
 resolves it afresh on every restart.
 
-**Install the Pi dependency packages first.** piwheels publishes no `lgpio` /
-`spidev` wheels for Python 3.13, so pip would otherwise try to compile them from
-source and fail with an opaque `swig: No such file or directory` /
-`Python.h: No such file or directory` (issue #66). Install the distro builds
-instead — `scripts/deploy.sh code` runs this exact `apt-get` line:
+**Install the lgpio/spidev build toolchain first.** Neither piwheels nor PyPI
+ships an `lgpio` or `spidev` wheel for Python 3.13, so they build from their
+(hash-verified) sdists on the Pi; without `swig` and the Python headers that
+fails with an opaque `swig: No such file or directory` /
+`Python.h: No such file or directory` (issue #66). `scripts/deploy.sh code` runs
+this exact line:
 
 ```bash
 sudo apt-get update
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  python3-lgpio python3-spidev python3-numpy python3-pil python3-gpiozero \
   swig python3-dev build-essential libopenjp2-7
 ```
 
-Then create the venv **with `--system-site-packages`** so those apt-installed
-extensions satisfy pip and it never falls back to a source build:
+Then create a plain venv and install the runtime from the pinned, hash-locked
+`requirements.lock` — **`--require-hashes`, never the loose `requirements-*.txt`**
+(`SECURITY.md` §6, issue #68). `requirements.lock` is `==`-pinned with `--hash=`
+lines for every transitive dependency; a plain venv reproduces it exactly rather
+than borrowing anything from system site-packages:
 
 ```bash
 sudo -u eink-calendar -H bash -c "
   cd ~/app &&
-  python3 -m venv --system-site-packages .venv &&
-  .venv/bin/pip install -r requirements-pi.txt
+  python3 -m venv .venv &&
+  .venv/bin/pip install --require-hashes -r requirements.lock
 "
 ```
 
-(No `--upgrade` on that `pip install` — it would pull newer PyPI copies over the
-already-satisfied system packages and re-trigger the source build.)
+(`requirements-base.txt` / `requirements-pi.txt` are the human-edited inputs;
+regenerate the lock with `uv pip compile --universal --generate-hashes
+--no-header requirements-pi.txt -o requirements.lock` after editing them.)
 
 ## 6. Configure
 
@@ -264,7 +267,7 @@ Within a few seconds the panel should show the default view.
 as §5, over SSH. Three subcommands:
 
 ```bash
-scripts/deploy.sh code    <pi-host> [VERSION]   # fetch release tarball → repoint ~/app → reinstall requirements-pi.txt → restart
+scripts/deploy.sh code    <pi-host> [VERSION]   # fetch release tarball → repoint ~/app → hash-locked reinstall → restart
 scripts/deploy.sh secrets <pi-host>             # rsync local ~/.config/eink-calendar/ → Pi (dir 0700 / files 0600 enforced)
 scripts/deploy.sh all     <pi-host> [VERSION]   # secrets, then code
 ```
@@ -272,9 +275,10 @@ scripts/deploy.sh all     <pi-host> [VERSION]   # secrets, then code
 `VERSION` is a release tag such as `v0.1.0`; omitted, it uses the newest tag in
 your local checkout (`git describe --tags --abbrev=0`). No git checkout is needed
 on the Pi — only the §4–§7 setup (service user, `~/app` symlink, config dir) and
-passwordless-or-prompted `sudo` for the SSH user. `code` also apt-installs the Pi
-dependency packages and rejects an unsupported Python (outside 3.11–3.13) before
-touching the venv — the same steps §5 lists by hand.
+passwordless-or-prompted `sudo` for the SSH user. `code` also apt-installs the
+lgpio/spidev build toolchain, rejects an unsupported Python (outside 3.11–3.13),
+and installs from `requirements.lock` with `--require-hashes` — the same steps §5
+lists by hand.
 
 Secrets under `~eink-calendar/.config/eink-calendar/` are **never** touched by
 the `code` path — only the explicit `secrets` subcommand syncs them, and only
