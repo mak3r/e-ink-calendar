@@ -65,8 +65,8 @@ tarball and point `~eink-calendar/app` at it — no git checkout on the Pi.
 `scripts/deploy.sh code` (§10) automates exactly these steps for later updates.
 
 ```bash
-# pick the latest tag from https://github.com/<owner>/<repo>/releases
-VERSION=v0.1.0
+# set this to the latest tag from https://github.com/<owner>/<repo>/releases
+VERSION=vX.Y.Z
 sudo -u eink-calendar -H bash -c "
   cd ~ &&
   curl -fsSL https://github.com/<owner>/<repo>/archive/refs/tags/${VERSION}.tar.gz | tar xz &&
@@ -272,7 +272,7 @@ scripts/deploy.sh secrets <pi-host>             # rsync local ~/.config/eink-cal
 scripts/deploy.sh all     <pi-host> [VERSION]   # secrets, then code
 ```
 
-`VERSION` is a release tag such as `v0.1.0`; omitted, it uses the newest tag in
+`VERSION` is a release tag such as `vX.Y.Z`; omitted, it uses the newest tag in
 your local checkout (`git describe --tags --abbrev=0`). No git checkout is needed
 on the Pi — only the §4–§7 setup (service user, `~/app` symlink, config dir) and
 passwordless-or-prompted `sudo` for the SSH user. `code` also apt-installs the
