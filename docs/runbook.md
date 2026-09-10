@@ -134,6 +134,19 @@ sudo -u eink-calendar -H bash -c "
 sudo -u eink-calendar -H nano ~eink-calendar/.config/eink-calendar/config.yaml
 ```
 
+**`config.example.yaml` ships dev defaults — the panel stays dark until you
+change them.** It sets `display.driver: mock` (renders to a PNG, never drives the
+Inky) and `display.mock_auto_open: true` (tries to `xdg-open` that PNG, which
+fails noisily on a headless Pi). Immediately after the copy, edit at minimum:
+
+- `display.driver: inky`
+- `display.mock_auto_open: false`
+- `refresh.timezone` — your IANA zone (e.g. `America/New_York`)
+- `accounts[].calendars` — your real calendar IDs and palette colours
+- `accounts[].credentials_file` / `token_file` — the paths set up in §7–§8
+
+The full field reference is below.
+
 File modes in this directory (`SECURITY.md` §5):
 
 | File | Mode |
@@ -149,7 +162,8 @@ names its own `credentials_file` / `token_file` (e.g. `personal_credentials.json
 
 Set at least:
 
-- `display.driver: inky`
+- `display.driver: inky` (the example ships `mock`)
+- `display.mock_auto_open: false` (the example ships `true`)
 - `display.resolution` — confirm against `inky.auto().resolution` during bring-up (section 11)
 - `refresh.daily_time` and `refresh.timezone` — when the daily auto-refresh runs
 - `accounts[].calendars[].color` — one of the six palette keys
