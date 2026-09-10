@@ -84,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     display = create_display(
         "mock",
         archive_path=archive_path,
+        data_dir=archive_path.parent,
         auto_open=args.auto_open or config.display.mock_auto_open,
     )
     display.set_image(image)

@@ -48,6 +48,7 @@ class App:
         self._display = create_display(
             config.display.driver,
             archive_path=config.display.output_path,
+            data_dir=config.display.output_path.parent,
             auto_open=config.display.mock_auto_open,
         )
         log.info("archiving each frame to %s", config.display.output_path)

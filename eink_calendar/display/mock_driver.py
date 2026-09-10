@@ -31,9 +31,11 @@ class MockDisplay(DisplayDriver):
         self,
         archive_path: str | os.PathLike[str],
         *,
+        data_dir: str | os.PathLike[str] | None = None,
         auto_open: bool = False,
     ) -> None:
         self._archive_path = archive_path
+        self._data_dir = data_dir
         self._auto_open = auto_open
         self._staged: Image.Image | None = None
 
@@ -43,7 +45,7 @@ class MockDisplay(DisplayDriver):
     def show(self) -> None:
         if self._staged is None:
             return
-        archive_image(self._staged, self._archive_path)
+        archive_image(self._staged, self._archive_path, data_dir=self._data_dir)
         if self._auto_open:
             _open_in_viewer(Path(self._archive_path).expanduser())
 
