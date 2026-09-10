@@ -29,8 +29,6 @@ from eink_calendar.config import AppConfig, ConfigError, load_config
 from eink_calendar.display.factory import create_display
 from eink_calendar.render.renderer import render
 
-_ARCHIVE_PATH = "data/last_render.png"
-
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -82,16 +80,18 @@ def main(argv: list[str] | None = None) -> int:
         week_starts_on=config.view.week_starts_on,
     )
 
+    archive_path = config.display.output_path
     display = create_display(
         "mock",
-        archive_path=_ARCHIVE_PATH,
+        archive_path=archive_path,
+        data_dir=archive_path.parent,
         auto_open=args.auto_open or config.display.mock_auto_open,
     )
     display.set_image(image)
     display.show()
 
     print(
-        f"rendered {view} view ({len(contents.events)} events) -> {_ARCHIVE_PATH}"
+        f"rendered {view} view ({len(contents.events)} events) -> {archive_path}"
     )
     return 0
 

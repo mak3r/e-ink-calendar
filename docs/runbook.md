@@ -7,11 +7,11 @@ Month views.
 This guide is generic and public — it assumes no prior context on the project.
 Replace `<owner>/<repo>` and the example paths with your own values.
 
-> **Status:** Cross-checked against the merged `SECURITY.md` (#4),
-> `scripts/setup_oauth.py` (#14), and the #15/#66 infra. §5 installs from the
-> merged hash-locked `requirements.lock` (`--require-hashes`), mirroring
-> `scripts/deploy.sh` (#68/#73). §11 (hardware bring-up) still needs one pass on
-> real hardware.
+> **Status:** Cross-checked against the merged infra from the v0.2.0 Pi bring-up
+> cluster — `scripts/install.sh` (#81), `scripts/deploy.sh` / `ssh -tt` sudo
+> (#82), `liblgpio-dev` (#85), the `data/` + `LG_WD` systemd fixes (#86), SPI/I2C
+> (#88) — plus `SECURITY.md` (#4) and `setup_oauth.py` (#14). §11 (hardware
+> bring-up) still needs a full pass on real hardware.
 
 ---
 
@@ -34,16 +34,28 @@ Replace `<owner>/<repo>` and the example paths with your own values.
 2. In the Imager's advanced options set the hostname, enable SSH, and configure Wi‑Fi / locale.
 3. Boot the Pi and SSH in.
 
-## 3. Enable SPI
+## 3. Enable SPI and I2C
 
-The Inky panel talks over SPI.
+The Inky panel is driven over SPI, and `inky.auto()` reads the panel's model
+from an EEPROM **over I2C** — both buses must be on (issue #88).
 
 ```bash
 sudo raspi-config nonint do_spi 0   # 0 = enable
+sudo raspi-config nonint do_i2c 0   # 0 = enable
+```
+
+Current `inky` (2.x) manages the SPI chip-select line itself via `gpiod` and
+aborts (`Chip Select: (line 8, GPIO8) currently claimed by spi0 CS0`) if the
+kernel SPI driver is holding it. Free GPIO7/8 by adding the no-chip-select
+overlay:
+
+```bash
+# append to /boot/firmware/config.txt, below the existing dtparam=spi=on
+echo 'dtoverlay=spi0-0cs' | sudo tee -a /boot/firmware/config.txt
 sudo reboot
 ```
 
-After reboot, confirm `/dev/spidev0.0` exists.
+After reboot, confirm **both** `/dev/spidev0.0` and `/dev/i2c-1` exist.
 
 ## 4. Create a dedicated service user
 
@@ -52,8 +64,11 @@ The calendar runs as its own non-sudo system user — never as `pi` or root
 
 ```bash
 sudo useradd --system --create-home --shell /usr/sbin/nologin eink-calendar
-sudo usermod -aG spi,gpio eink-calendar
+sudo usermod -aG spi,gpio,i2c eink-calendar
 ```
+
+The `i2c` group is what lets the service user read `/dev/i2c-1` for EEPROM
+detection (§3, issue #88).
 
 That user owns its own `~/.config/eink-calendar/` directory; secrets there are
 mode `0600` and `config.yaml` is `0640` (§6).
@@ -65,8 +80,8 @@ tarball and point `~eink-calendar/app` at it — no git checkout on the Pi.
 `scripts/deploy.sh code` (§10) automates exactly these steps for later updates.
 
 ```bash
-# pick the latest tag from https://github.com/<owner>/<repo>/releases
-VERSION=v0.1.0
+# set this to the latest tag from https://github.com/<owner>/<repo>/releases
+VERSION=vX.Y.Z
 sudo -u eink-calendar -H bash -c "
   cd ~ &&
   curl -fsSL https://github.com/<owner>/<repo>/archive/refs/tags/${VERSION}.tar.gz | tar xz &&
@@ -78,32 +93,27 @@ sudo -u eink-calendar -H bash -c "
 just extracts the new release and repoints the symlink, and the systemd unit
 resolves it afresh on every restart.
 
-**Install the lgpio/spidev build toolchain first.** Neither piwheels nor PyPI
-ships an `lgpio` or `spidev` wheel for Python 3.13, so they build from their
-(hash-verified) sdists on the Pi; without `swig` and the Python headers that
-fails with an opaque `swig: No such file or directory` /
-`Python.h: No such file or directory` (issue #66). `scripts/deploy.sh code` runs
-this exact line:
+Then run the release's own installer — **the one and only install step**
+(`scripts/install.sh`, issue #81). `scripts/deploy.sh code` (§10) runs this exact
+script over SSH, so a first install and every later update go through identical
+steps:
 
 ```bash
-sudo apt-get update
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  swig python3-dev build-essential libopenjp2-7
+cd ~eink-calendar/app && sudo ./scripts/install.sh
 ```
 
-Then create a plain venv and install the runtime from the pinned, hash-locked
-`requirements.lock` — **`--require-hashes`, never the loose `requirements-*.txt`**
-(`SECURITY.md` §6, issue #68). `requirements.lock` is `==`-pinned with `--hash=`
-lines for every transitive dependency; a plain venv reproduces it exactly rather
-than borrowing anything from system site-packages:
+`install.sh` is idempotent and, as root:
 
-```bash
-sudo -u eink-calendar -H bash -c "
-  cd ~/app &&
-  python3 -m venv .venv &&
-  .venv/bin/pip install --require-hashes -r requirements.lock
-"
-```
+- guards the Python version (3.11–3.13, issue #66)
+- `apt-get install`s the lgpio/spidev build toolchain —
+  `swig python3-dev build-essential libopenjp2-7 liblgpio-dev`. Neither piwheels
+  nor PyPI ships an `lgpio`/`spidev` wheel for Python 3.13, so they build from
+  their hash-verified sdists; `swig` + headers get the compile through (#66) and
+  `liblgpio-dev` provides the `-llgpio` the extension links against (#85).
+- as the service user: `mkdir -p data`, creates a plain venv, and
+  `pip install --require-hashes -r requirements.lock` — **hash-verified, never
+  the loose `requirements-*.txt`** (`SECURITY.md` §6, issue #68). It falls back
+  to `requirements-pi.txt` only for releases cut before the lock existed.
 
 (`requirements-base.txt` / `requirements-pi.txt` are the human-edited inputs;
 regenerate the lock with `uv pip compile --universal --generate-hashes
@@ -134,6 +144,19 @@ sudo -u eink-calendar -H bash -c "
 sudo -u eink-calendar -H nano ~eink-calendar/.config/eink-calendar/config.yaml
 ```
 
+**`config.example.yaml` ships dev defaults — the panel stays dark until you
+change them.** It sets `display.driver: mock` (renders to a PNG, never drives the
+Inky) and `display.mock_auto_open: true` (tries to `xdg-open` that PNG, which
+fails noisily on a headless Pi). Immediately after the copy, edit at minimum:
+
+- `display.driver: inky`
+- `display.mock_auto_open: false`
+- `refresh.timezone` — your IANA zone (e.g. `America/New_York`)
+- `accounts[].calendars` — your real calendar IDs and palette colours
+- `accounts[].credentials_file` / `token_file` — the paths set up in §7–§8
+
+The full field reference is below.
+
 File modes in this directory (`SECURITY.md` §5):
 
 | File | Mode |
@@ -149,7 +172,8 @@ names its own `credentials_file` / `token_file` (e.g. `personal_credentials.json
 
 Set at least:
 
-- `display.driver: inky`
+- `display.driver: inky` (the example ships `mock`)
+- `display.mock_auto_open: false` (the example ships `true`)
 - `display.resolution` — confirm against `inky.auto().resolution` during bring-up (section 11)
 - `refresh.daily_time` and `refresh.timezone` — when the daily auto-refresh runs
 - `accounts[].calendars[].color` — one of the six palette keys
@@ -239,16 +263,26 @@ authoritative. Key settings:
   `ExecStart=…/app/.venv/bin/python -m eink_calendar.app`
 - `Environment=EINK_CALENDAR_CONFIG=/home/eink-calendar/.config/eink-calendar/config.yaml`
   — set explicitly so config resolution (§6) does not depend on `HOME`
+- `Environment=LG_WD=/tmp` — lgpio's `lg` library drops a `.lgd-nfy*` FIFO in
+  CWD, which is the read-only release tree under `ProtectSystem=strict`; without
+  this, lgpio init fails and `gpiozero` silently falls back to a missing pin
+  factory (issue #86, confirmed on hardware)
+- `Environment=GPIOZERO_PIN_FACTORY=lgpio` — fail loudly instead of falling back
+- `ExecStartPre=+/bin/mkdir -p …/app/data` and `+/bin/chown` — the unit creates
+  and owns the render-archive dir on the host before the sandbox binds it RW
+  (`ReadWritePaths` does not create missing dirs). This is why a hand-followed
+  §5 no longer needs a separate `mkdir` (issue #87); `install.sh` also creates it.
 - `Restart=on-failure`, `RestartSec=5`, `After=/Wants=network-online.target`,
   `WantedBy=multi-user.target` — it comes back on its own after a reboot or a
   transient crash
 - Hardening (`SECURITY.md` §5): `UMask=0077` (so `data/last_render.png` — a
   picture of the family calendar — is not world-readable), `NoNewPrivileges=true`,
   `ProtectSystem=strict`, `ProtectHome=read-only` with
-  `ReadWritePaths=-/home/eink-calendar/app/data /home/eink-calendar/.config/eink-calendar`
-  (the leading `-` tolerates the release-relative `data/` dir not existing yet),
-  `PrivateTmp=true`, plus `ProtectKernelTunables/Modules`, `ProtectControlGroups`,
-  `RestrictRealtime`, `RestrictSUIDSGID`, `LockPersonality`
+  `ReadWritePaths=/home/eink-calendar/app/data /home/eink-calendar/.config/eink-calendar`
+  (no `-` tolerance — the `ExecStartPre` guarantees `data/` exists, so a bind
+  failure should stop the unit loudly), `PrivateTmp=true`, plus
+  `ProtectKernelTunables/Modules`, `ProtectControlGroups`, `RestrictRealtime`,
+  `RestrictSUIDSGID`, `LockPersonality`
 - SPI/GPIO device access is left at the default policy pending hardware bring-up
   (§11); tightening to `DevicePolicy=closed` needs the real panel to verify
 
@@ -263,22 +297,27 @@ Within a few seconds the panel should show the default view.
 
 ## 10. Deploying updates
 
-`scripts/deploy.sh` is release-based — it does the same tarball-and-symlink dance
-as §5, over SSH. Three subcommands:
+`scripts/deploy.sh` is release-based — it fetches the release tarball, repoints
+`~eink-calendar/app`, runs the release's own `scripts/install.sh` (the §5
+installer), and restarts the service, all over SSH. Three subcommands:
 
 ```bash
-scripts/deploy.sh code    <pi-host> [VERSION]   # fetch release tarball → repoint ~/app → hash-locked reinstall → restart
-scripts/deploy.sh secrets <pi-host>             # rsync local ~/.config/eink-calendar/ → Pi (dir 0700 / files 0600 enforced)
-scripts/deploy.sh all     <pi-host> [VERSION]   # secrets, then code
+scripts/deploy.sh code    [user@]<pi-host> [VERSION]   # fetch release → repoint ~/app → run install.sh → restart
+scripts/deploy.sh secrets [user@]<pi-host>             # rsync local ~/.config/eink-calendar/ → Pi (dir 0700 / files 0600 enforced)
+scripts/deploy.sh all     [user@]<pi-host> [VERSION]   # secrets, then code
 ```
 
-`VERSION` is a release tag such as `v0.1.0`; omitted, it uses the newest tag in
+`VERSION` is a release tag such as `vX.Y.Z`; omitted, it uses the newest tag in
 your local checkout (`git describe --tags --abbrev=0`). No git checkout is needed
-on the Pi — only the §4–§7 setup (service user, `~/app` symlink, config dir) and
-passwordless-or-prompted `sudo` for the SSH user. `code` also apt-installs the
-lgpio/spidev build toolchain, rejects an unsupported Python (outside 3.11–3.13),
-and installs from `requirements.lock` with `--require-hashes` — the same steps §5
-lists by hand.
+on the Pi — only the §4–§7 setup (service user, `~/app` symlink, config dir).
+
+**The SSH login user is a normal sudo-capable account — never the
+`eink-calendar` service user** (which has no login shell). Give the target as
+`user@pi-host` or set `EINK_SSH_USER`; a bare hostname connects as the host's
+default SSH user and, if that's wrong, fails with `Permission denied
+(publickey)`. That user needs `sudo` — the script runs `ssh -tt` so an ordinary
+sudo **password prompt works** (issue #82); passwordless (`NOPASSWD`) sudo is
+fine too but not required.
 
 Secrets under `~eink-calendar/.config/eink-calendar/` are **never** touched by
 the `code` path — only the explicit `secrets` subcommand syncs them, and only
@@ -289,7 +328,7 @@ Environment overrides (all optional): `EINK_SERVICE_USER` (default
 `eink-calendar`), `EINK_HOME` (default `/home/<service user>`), `EINK_SERVICE`
 (default `eink-calendar`), `EINK_CONFIG_DIR` (default `$HOME/.config/eink-calendar`
 — the *local* rsync source), `EINK_REPO_SLUG` (default: parsed from `origin`),
-`EINK_SSH_USER`.
+`EINK_SSH_USER` (the sudo-capable login user, **not** the service user).
 
 ### Previewing the current screen
 
@@ -307,19 +346,46 @@ layout differs.
 
 ## 11. First-boot hardware bring-up checklist
 
-Run once on real hardware and record the results here:
+Run once on real hardware and record the results here. **Results below are from
+the first v0.2.0 bring-up (Raspberry Pi OS Trixie, Inky Impression 7.3").**
 
 | Check | How | Result |
 |---|---|---|
-| Panel detected | `python3 -c "from inky.auto import auto; print(auto().resolution)"` | _fill in_ |
-| `display.resolution` in config matches the line above | edit `config.yaml` | _fill in_ |
-| Panel actually refreshes with the composited image | watch after `systemctl start` | _fill in_ |
-| Button pin map matches [Pimoroni's current pinout](https://learn.pimoroni.com/) | compare to `buttons.pin_map` | _fill in_ |
-| Button A cycles Day → Week → Month | press it | _fill in_ |
-| Button B forces a refresh | press it, watch the journal | _fill in_ |
-| Buttons C and D do nothing (no crash, no log) | press them | _fill in_ |
+| `/dev/spidev0.0` and `/dev/i2c-1` both present | `ls -l /dev/spidev0.0 /dev/i2c-1` | _fill in_ |
+| Panel EEPROM visible on I2C | `i2cdetect -y 1` shows a device at `0x50` | _fill in_ |
+| App starts clean **as the service user** | `sudo -u eink-calendar -H bash -c '~/app/.venv/bin/python -m eink_calendar.app'` (exercises SPI CS + I2C + lgpio inside the systemd sandbox constraints) | yes (panel detected, buttons OK — see below) |
+| Panel detected | `sudo -u eink-calendar -H bash -c '~/app/.venv/bin/python -c "from inky.auto import auto; print(auto().resolution)"'` | `(800, 480)` |
+| `display.resolution` in config matches the line above | edit `config.yaml` | yes |
+| Panel actually refreshes with the composited image | watch after `systemctl start` | **no** — tracked in #100 |
+| Button pin map matches [Pimoroni's current pinout](https://learn.pimoroni.com/) | compare to `buttons.pin_map` | yes — see `gpioinfo` below |
+| Button A cycles Day → Week → Month | press it | yes |
+| Button B forces a refresh | press it, watch the journal | yes |
+| Buttons C and D do nothing (no crash, no log) | press them | yes |
 | Daily auto-refresh fires at `daily_time` | set a near-future time, wait | _fill in_ |
-| Service restarts after `sudo reboot` with no prompt | reboot | _fill in_ |
+| Service restarts after `sudo reboot` with no prompt | reboot | yes |
+
+`gpioinfo` from the bring-up Pi confirms the pin map — `inky` holds GPIO8/22/27
+(SPI DC/CS/reset) and GPIO17; `lg` (lgpio, via `gpiozero` for the buttons) holds
+GPIO5/6/16/24 with pull-ups and edge detection:
+
+```
+gpiochip0 - 58 lines:
+	line   5:	"GPIO5"         	input bias=pull-up edges=both consumer="lg"
+	line   6:	"GPIO6"         	input bias=pull-up edges=both consumer="lg"
+	line   8:	"GPIO8"         	output bias=disabled consumer="inky"
+	line  16:	"GPIO16"        	input bias=pull-up edges=both consumer="lg"
+	line  17:	"GPIO17"        	input bias=pull-up consumer="inky"
+	line  22:	"GPIO22"        	output bias=disabled consumer="inky"
+	line  24:	"GPIO24"        	input bias=pull-up edges=both consumer="lg"
+	line  27:	"GPIO27"        	output bias=disabled consumer="inky"
+	(all other gpiochip0 lines: input, unclaimed)
+
+gpiochip1 - 8 lines:
+	line   0:	"BT_ON"         	output consumer="shutdown"
+	line   2:	"PWR_LED_OFF"   	output active-low consumer="PWR"
+	line   6:	"SD_PWR_ON"     	output consumer="regulator-sd-vcc"
+	(gpiochip1 is the RP1 south bank — not used by this project)
+```
 
 ---
 
@@ -329,6 +395,22 @@ Run once on real hardware and record the results here:
 `journalctl -u eink-calendar.service -e`. If SPI is disabled you'll see a device
 error — re-run section 3. A blank panel with a healthy log usually means the
 cache is empty and the first fetch failed; see the auth items below.
+
+**Panel stays on the old image although init is clean (buttons work, no errors)**
+Known open issue as of the first v0.2.0 bring-up — `inky.auto()` succeeds and the
+service is healthy but the composited frame never reaches the panel. Tracked in
+**#100** (`persona/developer`). Not a config problem; nothing to change here yet.
+
+**`RuntimeError: No EEPROM detected!` in the log**
+`inky.auto()` reads the panel model over I2C and I2C is off, or the service user
+isn't in the `i2c` group. Re-run section 3 (`do_i2c 0`), confirm `/dev/i2c-1`
+and `i2cdetect -y 1` shows `0x50`, and check `groups eink-calendar` includes
+`i2c` (section 4).
+
+**`Chip Select: (line 8, GPIO8) currently claimed by spi0 CS0`**
+The kernel SPI driver is holding the chip-select line `inky` 2.x wants to manage
+itself. Add `dtoverlay=spi0-0cs` under `dtparam=spi=on` in
+`/boot/firmware/config.txt` and reboot (section 3).
 
 **Display froze on an old image**
 By design: a failed fetch keeps the last good render rather than blanking. Check

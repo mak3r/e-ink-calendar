@@ -17,16 +17,22 @@
 # in the spi,gpio groups, owning ~/app (a symlink to an extracted release) and
 # ~/.config/eink-calendar/.
 #
-# The `code` path enforces a supported Python range (3.11–3.13, issue #66),
-# apt-installs the build toolchain for the lgpio/spidev C extensions (needs the
-# SSH user to have passwordless sudo), and installs the runtime from the pinned,
-# hash-locked requirements.lock with `pip install --require-hashes`
-# (SECURITY.md §6, issue #68) — never from the loose requirements-*.txt.
+# SSH login user: the service user has no login shell, so you connect as a
+# normal sudo-capable user. Pass `user@host`, or set EINK_SSH_USER — a bare
+# hostname connects as `<service-user>@host` and fails with "Permission denied
+# (publickey)". That user needs `sudo`; this script allocates a TTY (`ssh -tt`)
+# so an ordinary password prompt works (issue #82). NOPASSWD sudo also works.
+#
+# The `code` path just fetches the release tarball, repoints ~/app, and runs the
+# release's own `scripts/install.sh` on the Pi — the same script docs/runbook.md
+# §5 has the operator run by hand (issue #81). install.sh does the Python
+# guard (3.11–3.13, #66), the lgpio/spidev build toolchain, and the hash-locked
+# `pip install --require-hashes -r requirements.lock` (SECURITY.md §6, #68).
 #
 # Usage:
-#   scripts/deploy.sh code    <pi-host> [VERSION]  # fetch release + reinstall + restart
-#   scripts/deploy.sh secrets <pi-host>            # rsync local ~/.config/eink-calendar/ to the Pi
-#   scripts/deploy.sh all     <pi-host> [VERSION]  # secrets, then code
+#   scripts/deploy.sh code    [user@]<pi-host> [VERSION]  # fetch release + install + restart
+#   scripts/deploy.sh secrets [user@]<pi-host>            # rsync local ~/.config/eink-calendar/ to the Pi
+#   scripts/deploy.sh all     [user@]<pi-host> [VERSION]  # secrets, then code
 #
 # VERSION is a release tag such as v1.0.0. When omitted, the newest tag reachable
 # from the local checkout (`git describe --tags --abbrev=0`) is used.
@@ -37,7 +43,8 @@
 #   EINK_SERVICE       systemd unit name        (default: eink-calendar)
 #   EINK_CONFIG_DIR    local secrets dir        (default: $HOME/.config/eink-calendar)
 #   EINK_REPO_SLUG     GitHub <owner>/<repo>    (default: parsed from `origin`)
-#   EINK_SSH_USER      ssh user on the Pi       (default: the host's default; must have sudo)
+#   EINK_SSH_USER      ssh login user on the Pi (default: from `user@host`, else the
+#                      host's own default; must have sudo — NOT the service user)
 
 set -euo pipefail
 
@@ -52,7 +59,13 @@ ssh_host() {
   local host="$1"
   if [ -n "${EINK_SSH_USER:-}" ]; then
     echo "${EINK_SSH_USER}@${host}"
+  elif [ "${host}" != "${host#*@}" ]; then
+    # already user@host
+    echo "${host}"
   else
+    echo "deploy: '${host}' has no login user — connecting as your default SSH user." >&2
+    echo "        If that is wrong you'll get 'Permission denied (publickey)'; pass" >&2
+    echo "        user@host or set EINK_SSH_USER (must have sudo, not the service user)." >&2
     echo "${host}"
   fi
 }
@@ -85,54 +98,29 @@ deploy_code() {
   local dir="${reponame}-${version#v}"
 
   echo "==> Deploying ${slug} ${version} to ${target}"
-  ssh "${target}" \
+  # -tt forces a TTY so an ordinary `sudo` password prompt works on the Pi
+  # (issue #82); NOPASSWD sudo is fine too.
+  ssh -tt "${target}" \
     SERVICE="${SERVICE}" SERVICE_USER="${SERVICE_USER}" \
     TARBALL="${tarball}" RELEASE_DIR="${dir}" \
     'bash -s' <<'REMOTE'
 set -euo pipefail
 
-# Supported Pi interpreters: Raspberry Pi OS Bookworm (3.11) .. Trixie (3.13).
-# Fail early and clearly instead of dying inside a swig build (issue #66).
-PYV="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-case "${PYV}" in
-  3.11|3.12|3.13) echo "==> Pi Python ${PYV}" ;;
-  *) echo "deploy: unsupported Pi Python ${PYV} (supported: 3.11-3.13)" >&2; exit 1 ;;
-esac
+HOME_DIR="$(getent passwd "${SERVICE_USER}" | cut -d: -f6)"
+[ -n "${HOME_DIR}" ] || { echo "deploy: service user ${SERVICE_USER} not found — see docs/runbook.md §4" >&2; exit 1; }
 
-# Build toolchain for lgpio/spidev: piwheels/PyPI ship no lgpio or spidev wheel
-# for cp313, so they build from their hash-verified sdists — swig + Python
-# headers are what the #66 failure was missing. numpy/Pillow install as wheels.
-if command -v apt-get >/dev/null 2>&1; then
-  echo "==> Ensuring lgpio/spidev build toolchain"
-  sudo apt-get update -qq
-  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    swig python3-dev build-essential libopenjp2-7
-else
-  echo "deploy: apt-get not found — install swig + Python headers yourself" >&2
-fi
+# 1. Fetch + extract the release and repoint ~/app, as the service user.
+sudo -u "${SERVICE_USER}" -H TARBALL="${TARBALL}" RELEASE_DIR="${RELEASE_DIR}" bash -s <<'FETCH'
+set -euo pipefail
+cd ~
+[ -d "${RELEASE_DIR}" ] || curl -fsSL "${TARBALL}" | tar xz
+ln -sfn "${RELEASE_DIR}" app
+FETCH
 
-sudo -u "${SERVICE_USER}" -H \
-  TARBALL="${TARBALL}" RELEASE_DIR="${RELEASE_DIR}" \
-  bash -c '
-    set -euo pipefail
-    cd ~
-    if [ ! -d "${RELEASE_DIR}" ]; then
-      curl -fsSL "${TARBALL}" | tar xz
-    fi
-    ln -sfn "${RELEASE_DIR}" app
-    cd app
-    mkdir -p data
-    # Plain venv — the runtime is reproduced exactly from the hash-locked
-    # manifest, not borrowed from system site-packages.
-    [ -d .venv ] || python3 -m venv .venv
-    if [ -f requirements.lock ]; then
-      # SECURITY.md §6: hash-verified install, never the loose requirements-*.txt.
-      .venv/bin/pip install --quiet --require-hashes -r requirements.lock
-    elif [ -f requirements-pi.txt ]; then
-      # Fallback for releases cut before requirements.lock existed.
-      .venv/bin/pip install --quiet -r requirements-pi.txt
-    fi
-  '
+# 2. Run the release's own installer (same script as docs/runbook.md §5).
+sudo EINK_SERVICE_USER="${SERVICE_USER}" bash -c "cd '${HOME_DIR}/${RELEASE_DIR}' && ./scripts/install.sh"
+
+# 3. Restart the service.
 sudo systemctl restart "${SERVICE}.service"
 sudo systemctl --no-pager --lines=5 status "${SERVICE}.service" || true
 REMOTE
@@ -149,7 +137,8 @@ deploy_secrets() {
   rsync -az --delete --chmod=D700,F600 "${CONFIG_DIR}/" "${target}:${stage}/"
 
   echo "==> Installing into ${SERVICE_HOME}/.config/eink-calendar/ as ${SERVICE_USER}"
-  ssh "${target}" STAGE="${stage}" SERVICE_USER="${SERVICE_USER}" 'bash -s' <<'REMOTE'
+  # -tt so `sudo` can prompt for a password (issue #82).
+  ssh -tt "${target}" STAGE="${stage}" SERVICE_USER="${SERVICE_USER}" 'bash -s' <<'REMOTE'
 set -euo pipefail
 DEST="$(getent passwd "${SERVICE_USER}" | cut -d: -f6)/.config/eink-calendar"
 sudo install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" -m 700 "${DEST}"
@@ -162,7 +151,7 @@ REMOTE
 
 main() {
   local cmd="${1:-}"; local host="${2:-}"; local version="${3:-}"
-  [ -n "${host}" ] || die "usage: deploy.sh {code|secrets|all} <pi-host> [VERSION]"
+  [ -n "${host}" ] || die "usage: deploy.sh {code|secrets|all} [user@]<pi-host> [VERSION]  (SSH user needs sudo; see header)"
   case "${cmd}" in
     code)    deploy_code "${host}" "${version}" ;;
     secrets) deploy_secrets "${host}" ;;

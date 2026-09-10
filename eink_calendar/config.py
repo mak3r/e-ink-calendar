@@ -64,7 +64,7 @@ _DEFAULT_PATHS: tuple[Path, ...] = (
 @dataclass(frozen=True)
 class DisplayConfig:
     driver: str
-    mock_output_path: Path
+    output_path: Path
     mock_auto_open: bool
     resolution: tuple[int, int]
 
@@ -161,7 +161,7 @@ def _resolve_path(path: str | os.PathLike[str] | None) -> Path:
 
 def _build_app_config(data: dict[str, Any], source: Path) -> AppConfig:
     return AppConfig(
-        display=_build_display(_section(data, "display", source)),
+        display=_build_display(_section(data, "display", source), source),
         refresh=_build_refresh(_section(data, "refresh", source)),
         view=_build_view(_section(data, "view", source)),
         buttons=_build_buttons(_section(data, "buttons", source)),
@@ -186,7 +186,7 @@ def _require(section: dict[str, Any], key: str, section_name: str) -> Any:
     return section[key]
 
 
-def _build_display(section: dict[str, Any]) -> DisplayConfig:
+def _build_display(section: dict[str, Any], source: Path) -> DisplayConfig:
     driver = _require(section, "driver", "display")
     if driver not in _VALID_DRIVERS:
         raise ConfigError(
@@ -205,12 +205,31 @@ def _build_display(section: dict[str, Any]) -> DisplayConfig:
 
     return DisplayConfig(
         driver=driver,
-        mock_output_path=Path(
-            str(section.get("mock_output_path", "./data/preview.png"))
-        ).expanduser(),
+        output_path=_resolve_output_path(section, source),
         mock_auto_open=bool(section.get("mock_auto_open", False)),
         resolution=(int(resolution_raw[0]), int(resolution_raw[1])),
     )
+
+
+def _resolve_output_path(section: dict[str, Any], source: Path) -> Path:
+    """Absolute path where both drivers archive the last composited frame.
+
+    ``display.output_path`` may be absolute (used as-is) or relative, in which
+    case it is anchored to the config file's directory — never ``os.getcwd()``,
+    which under systemd is a symlinked ``WorkingDirectory`` inside a mount
+    namespace and cannot be relied on. Defaults to ``data/last_render.png``
+    beside the config file. (The pre-0.3 ``mock_output_path`` key was never
+    wired to anything and is ignored.)
+    """
+    raw = section.get("output_path")
+    candidate = Path(str(raw) if raw else "data/last_render.png").expanduser()
+    if not candidate.is_absolute():
+        candidate = source.parent / candidate
+    if not candidate.is_absolute():  # source itself was relative (dev fallback)
+        candidate = Path.cwd() / candidate
+    # normpath (not resolve): collapse '..' without dereferencing the ~/app
+    # release symlink, so the archived path stays stable across deploys.
+    return Path(os.path.normpath(candidate))
 
 
 def _build_refresh(section: dict[str, Any]) -> RefreshConfig:
