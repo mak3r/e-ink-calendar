@@ -9,7 +9,7 @@ import pytest
 _CONFIG_TEMPLATE = """\
 display:
   driver: mock
-  mock_output_path: "./data/preview.png"
+  output_path: "{output}"
   mock_auto_open: false
   resolution: [800, 480]
 refresh:
@@ -39,7 +39,13 @@ def cache_path(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def config_file(tmp_path: Path, cache_path: Path) -> Path:
+def output_path(tmp_path: Path) -> Path:
+    """Absolute archive path the fixture config points ``display.output_path`` at."""
+    return tmp_path / "data" / "last_render.png"
+
+
+@pytest.fixture
+def config_file(tmp_path: Path, cache_path: Path, output_path: Path) -> Path:
     """A valid ``config.yaml`` selecting the mock driver.
 
     The referenced credential/token files are never created — anything that
@@ -52,6 +58,7 @@ def config_file(tmp_path: Path, cache_path: Path) -> Path:
             creds=tmp_path / "creds.json",
             token=tmp_path / "token.json",
             cache=cache_path,
+            output=output_path,
         ),
         encoding="utf-8",
     )
