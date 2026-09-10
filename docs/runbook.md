@@ -9,9 +9,9 @@ Replace `<owner>/<repo>` and the example paths with your own values.
 
 > **Status:** Cross-checked against the merged `SECURITY.md` (#4),
 > `scripts/setup_oauth.py` (#14), and the #15/#66 infra. §5 installs from the
-> hash-locked `requirements.lock` (`--require-hashes`), mirroring
-> `scripts/deploy.sh` in PR #74 (#68/#73) — **merge #74 before this one.** §11
-> (hardware bring-up) still needs one pass on real hardware.
+> merged hash-locked `requirements.lock` (`--require-hashes`), mirroring
+> `scripts/deploy.sh` (#68/#73). §11 (hardware bring-up) still needs one pass on
+> real hardware.
 
 ---
 
