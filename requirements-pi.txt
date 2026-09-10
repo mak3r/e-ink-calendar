@@ -1,16 +1,14 @@
-# Pi-only runtime deps (real GPIO/SPI + panel driver). Installed by
-# scripts/deploy.sh and by docs/runbook.md §5.
+# Pi-only runtime deps (real GPIO/SPI + panel driver). Human-edited INPUT only —
+# the device never installs from this file directly.
 #
-# On Raspberry Pi OS the C-extension packages below are expected to come from
-# apt into a `--system-site-packages` venv:
-#   python3-lgpio python3-spidev python3-numpy python3-pil python3-gpiozero
-# piwheels publishes no lgpio/spidev wheels for cp313 (Trixie-era images), and
-# building them from sdist needs swig + Python headers (issue #66).
-# scripts/deploy.sh installs those apt packages before pip runs, so pip finds
-# lgpio/spidev/numpy/Pillow already satisfied and does not try to compile them.
+# scripts/deploy.sh and docs/runbook.md §5 install from requirements.lock with
+# `pip install --require-hashes` (SECURITY.md §6, issue #68). After editing this
+# file, regenerate the lock:
+#   uv pip compile --universal --generate-hashes --no-header \
+#       requirements-pi.txt -o requirements.lock
 #
-# They stay listed here so a plain `pip install -r requirements-pi.txt` still
-# resolves a complete environment on platforms where wheels *are* available.
+# lgpio and spidev have no cp313 wheel and build from their (hash-verified)
+# sdists on the Pi; scripts/deploy.sh installs swig + headers first (issue #66).
 -r requirements-base.txt
 inky
 gpiozero

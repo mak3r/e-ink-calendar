@@ -17,9 +17,11 @@
 # in the spi,gpio groups, owning ~/app (a symlink to an extracted release) and
 # ~/.config/eink-calendar/.
 #
-# The `code` path apt-installs the Pi runtime/build prerequisites (needs the SSH
-# user to have passwordless sudo) and enforces a supported Python range
-# (3.11–3.13) before touching the venv — see issue #66.
+# The `code` path enforces a supported Python range (3.11–3.13, issue #66),
+# apt-installs the build toolchain for the lgpio/spidev C extensions (needs the
+# SSH user to have passwordless sudo), and installs the runtime from the pinned,
+# hash-locked requirements.lock with `pip install --require-hashes`
+# (SECURITY.md §6, issue #68) — never from the loose requirements-*.txt.
 #
 # Usage:
 #   scripts/deploy.sh code    <pi-host> [VERSION]  # fetch release + reinstall + restart
@@ -97,18 +99,16 @@ case "${PYV}" in
   *) echo "deploy: unsupported Pi Python ${PYV} (supported: 3.11-3.13)" >&2; exit 1 ;;
 esac
 
-# Pi runtime + build prerequisites. piwheels ships no lgpio/spidev wheels for
-# cp313, so we install the distro builds (no compiler needed) and pull them into
-# the venv via --system-site-packages; swig + headers are the fallback for any
-# package that still has to build from sdist.
+# Build toolchain for lgpio/spidev: piwheels/PyPI ship no lgpio or spidev wheel
+# for cp313, so they build from their hash-verified sdists — swig + Python
+# headers are what the #66 failure was missing. numpy/Pillow install as wheels.
 if command -v apt-get >/dev/null 2>&1; then
-  echo "==> Ensuring Pi dependency packages"
+  echo "==> Ensuring lgpio/spidev build toolchain"
   sudo apt-get update -qq
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    python3-lgpio python3-spidev python3-numpy python3-pil python3-gpiozero \
     swig python3-dev build-essential libopenjp2-7
 else
-  echo "deploy: apt-get not found — install lgpio/spidev/numpy/pil + swig/headers yourself" >&2
+  echo "deploy: apt-get not found — install swig + Python headers yourself" >&2
 fi
 
 sudo -u "${SERVICE_USER}" -H \
@@ -122,11 +122,14 @@ sudo -u "${SERVICE_USER}" -H \
     ln -sfn "${RELEASE_DIR}" app
     cd app
     mkdir -p data
-    # --system-site-packages so the apt-installed lgpio/spidev/numpy/Pillow
-    # satisfy pip and it never falls back to a source build.
-    [ -d .venv ] || python3 -m venv --system-site-packages .venv
-    if [ -f requirements-pi.txt ]; then
-      # No --upgrade: leave already-satisfied system packages in place.
+    # Plain venv — the runtime is reproduced exactly from the hash-locked
+    # manifest, not borrowed from system site-packages.
+    [ -d .venv ] || python3 -m venv .venv
+    if [ -f requirements.lock ]; then
+      # SECURITY.md §6: hash-verified install, never the loose requirements-*.txt.
+      .venv/bin/pip install --quiet --require-hashes -r requirements.lock
+    elif [ -f requirements-pi.txt ]; then
+      # Fallback for releases cut before requirements.lock existed.
       .venv/bin/pip install --quiet -r requirements-pi.txt
     fi
   '
