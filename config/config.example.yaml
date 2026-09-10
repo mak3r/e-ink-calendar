@@ -4,7 +4,13 @@
 
 display:
   driver: mock            # "inky" | "mock"
-  mock_output_path: "./data/preview.png"
+  # Where every rendered frame is archived (both drivers) for pull_preview.sh
+  # and design review. A relative path is resolved against THIS file's
+  # directory, never the process CWD. On the Pi, systemd's WorkingDirectory is
+  # a symlinked release dir inside a mount namespace, so set an absolute path
+  # that stays put across deploys, e.g.:
+  #   output_path: "/home/eink-calendar/app/data/last_render.png"
+  output_path: "../data/last_render.png"
   mock_auto_open: true
   resolution: [800, 480]   # confirm against inky.auto().resolution during Pi bring-up
 
