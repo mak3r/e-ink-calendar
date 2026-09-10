@@ -129,7 +129,9 @@ runuser -u "${SERVICE_USER}" -- bash -c '
   ln -sfn "$1" app
 ' _ "${RELEASE_DIR}" "${TARBALL}"
 
-# 2. Run the release's own installer (same script as docs/runbook.md §5).
+# 2. Run the release's own installer (same script as docs/runbook.md §5): the
+#    Python guard (#66), the lgpio/spidev build toolchain, and the hash-locked
+#    `pip install --require-hashes -r requirements.lock` (SECURITY.md §6, #68).
 EINK_SERVICE_USER="${SERVICE_USER}" bash -c 'cd "$1/$2" && exec ./scripts/install.sh' _ "${HOME_DIR}" "${RELEASE_DIR}"
 
 # 3. Restart the service.
