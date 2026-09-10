@@ -19,6 +19,18 @@ WorkingDirectory=/home/eink-calendar/app
 # back to ~/.config/eink-calendar/config.yaml. Set it explicitly so the unit
 # does not depend on HOME resolution.
 Environment=EINK_CALENDAR_CONFIG=/home/eink-calendar/.config/eink-calendar/config.yaml
+# lgpio's `lg` C library drops its .lgd-nfy* notification FIFO in CWD; CWD here
+# is the read-only release tree under ProtectSystem=strict, so lgpio init fails
+# and gpiozero silently falls back to a pin factory that no longer exists on
+# current kernels. Point it at PrivateTmp (issue #86, confirmed on hardware).
+Environment=LG_WD=/tmp
+# Fail loudly if the lgpio factory can't load, rather than falling back.
+Environment=GPIOZERO_PIN_FACTORY=lgpio
+# Guarantee the render-archive dir exists on the host before the sandbox binds
+# it RW below — a hand-followed runbook §5 install never creates it, and
+# ReadWritePaths does not create missing dirs (issue #86). `+` runs unsandboxed.
+ExecStartPre=+/bin/mkdir -p /home/eink-calendar/app/data
+ExecStartPre=+/bin/chown eink-calendar:eink-calendar /home/eink-calendar/app/data
 ExecStart=/home/eink-calendar/app/.venv/bin/python -m eink_calendar.app
 Restart=on-failure
 RestartSec=5
@@ -32,10 +44,11 @@ UMask=0077
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-# Leading "-" on the release-relative data dir: a freshly-extracted release may
-# not have it until the app (or deploy.sh) creates it, and its real path changes
-# each deploy as the ~/app symlink is repointed.
-ReadWritePaths=-/home/eink-calendar/app/data /home/eink-calendar/.config/eink-calendar
+# The release-relative data dir (resolved through the ~/app symlink at each
+# start) is guaranteed to exist by the ExecStartPre above, so no "-" tolerance
+# is needed — a genuine failure to bind it should stop the unit with a clear
+# error, not silently drop the mount and let the app crash on first write.
+ReadWritePaths=/home/eink-calendar/app/data /home/eink-calendar/.config/eink-calendar
 PrivateTmp=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
