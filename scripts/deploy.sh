@@ -17,6 +17,10 @@
 # in the spi,gpio groups, owning ~/app (a symlink to an extracted release) and
 # ~/.config/eink-calendar/.
 #
+# The `code` path apt-installs the Pi runtime/build prerequisites (needs the SSH
+# user to have passwordless sudo) and enforces a supported Python range
+# (3.11–3.13) before touching the venv — see issue #66.
+#
 # Usage:
 #   scripts/deploy.sh code    <pi-host> [VERSION]  # fetch release + reinstall + restart
 #   scripts/deploy.sh secrets <pi-host>            # rsync local ~/.config/eink-calendar/ to the Pi
@@ -84,6 +88,29 @@ deploy_code() {
     TARBALL="${tarball}" RELEASE_DIR="${dir}" \
     'bash -s' <<'REMOTE'
 set -euo pipefail
+
+# Supported Pi interpreters: Raspberry Pi OS Bookworm (3.11) .. Trixie (3.13).
+# Fail early and clearly instead of dying inside a swig build (issue #66).
+PYV="$(python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+case "${PYV}" in
+  3.11|3.12|3.13) echo "==> Pi Python ${PYV}" ;;
+  *) echo "deploy: unsupported Pi Python ${PYV} (supported: 3.11-3.13)" >&2; exit 1 ;;
+esac
+
+# Pi runtime + build prerequisites. piwheels ships no lgpio/spidev wheels for
+# cp313, so we install the distro builds (no compiler needed) and pull them into
+# the venv via --system-site-packages; swig + headers are the fallback for any
+# package that still has to build from sdist.
+if command -v apt-get >/dev/null 2>&1; then
+  echo "==> Ensuring Pi dependency packages"
+  sudo apt-get update -qq
+  sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    python3-lgpio python3-spidev python3-numpy python3-pil python3-gpiozero \
+    swig python3-dev build-essential libopenjp2-7
+else
+  echo "deploy: apt-get not found — install lgpio/spidev/numpy/pil + swig/headers yourself" >&2
+fi
+
 sudo -u "${SERVICE_USER}" -H \
   TARBALL="${TARBALL}" RELEASE_DIR="${RELEASE_DIR}" \
   bash -c '
@@ -95,9 +122,12 @@ sudo -u "${SERVICE_USER}" -H \
     ln -sfn "${RELEASE_DIR}" app
     cd app
     mkdir -p data
-    [ -d .venv ] || python3 -m venv .venv
+    # --system-site-packages so the apt-installed lgpio/spidev/numpy/Pillow
+    # satisfy pip and it never falls back to a source build.
+    [ -d .venv ] || python3 -m venv --system-site-packages .venv
     if [ -f requirements-pi.txt ]; then
-      .venv/bin/pip install --quiet --upgrade -r requirements-pi.txt
+      # No --upgrade: leave already-satisfied system packages in place.
+      .venv/bin/pip install --quiet -r requirements-pi.txt
     fi
   '
 sudo systemctl restart "${SERVICE}.service"
