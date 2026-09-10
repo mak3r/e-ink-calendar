@@ -335,6 +335,11 @@ Two ways to see a render without a physical panel:
 The mock display driver (`display/mock_driver.py`, owned by test-engineer) writes
 the PNG and optionally opens it with the platform opener.
 
+For the full design-iteration loop — capturing a Day/Week/Month frame set,
+edge-case calendar fixtures, staging renders for the product-designer persona,
+and feeding decisions back into `.claude/plans/` and rendering issues — see
+[`design-workflow.md`](design-workflow.md).
+
 ## Deploy, systemd, and releases
 
 ### Service user
