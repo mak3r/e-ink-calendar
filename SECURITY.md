@@ -71,9 +71,20 @@ read) MUST satisfy all of the following:
 - That user owns `~/.config/eink-calendar/` (i.e. the service user's own home /
   config dir), and those files are mode `0600` (token/secret) or `0640`
   (config).
-- The unit MUST set `UMask=0077` so that any file the service writes outside
-  `local_files.write_private_text()` — notably `data/last_render.png`, which is
-  a picture of the family's calendar — is not world-readable.
+- `data/last_render.png` is a picture of the family's calendar and is personal
+  data. Its confidentiality is **defence-in-depth**, not umask-only:
+  - `display.base.archive_image()` MUST create it mode `0600` explicitly
+    (open with `O_CREAT` at `0600`, or `os.chmod` after save), regardless of
+    the process umask — the same guarantee `local_files.write_private_text()`
+    gives the cache and token files. It MUST NOT rely on `UMask=0077` alone,
+    since the render also runs outside systemd (dev loop, `render_once.py`,
+    cron, a future non-systemd deploy).
+  - `archive_image()` MUST constrain the target to the configured data dir and
+    reject/adjust a path that resolves elsewhere.
+  - The archive code path is owned by `developer`; this states the requirement
+    it must meet (tracked in #93).
+- The unit MUST still set `UMask=0077` as the backstop for any other file the
+  service writes outside `write_private_text()` / `archive_image()`.
 - The unit applies systemd sandboxing: `NoNewPrivileges=true`,
   `ProtectSystem=strict`, `ProtectHome=read-only` with `ReadWritePaths=` scoped
   to the checkout's `data/` and the service user's config dir, `PrivateTmp=true`,
