@@ -75,6 +75,9 @@ python scripts/render_once.py --open
 - [docs/architecture.md](docs/architecture.md) — module layout, config schema,
   main loop and scheduling, OAuth flow, colour palette, deploy, and security
   considerations.
+- [docs/design-workflow.md](docs/design-workflow.md) — iterating on the Day /
+  Week / Month layouts: the mock render loop, real-Pi preview, and handoff to
+  the product-designer persona.
 - [docs/runbook.md](docs/runbook.md) — end-user install guide and
   credential revoke/rotate procedure.
 - [docs/acceptance-criteria.md](docs/acceptance-criteria.md) — MVP acceptance
