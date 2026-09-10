@@ -10,7 +10,7 @@
 #
 # Secrets are NEVER deployed by the code path. They live outside the checkout in
 # the service user's ~/.config/eink-calendar/ and are synced only by the
-# explicit `secrets` subcommand below (rsync + sudo rsync --chown, not git).
+# explicit `secrets` subcommand below (rsync + rsync --chown, not git).
 #
 # Assumes the Pi has been set up per docs/runbook.md §4–§7: a dedicated
 # `--system` service user (default name `eink-calendar`) with no login shell,
@@ -20,18 +20,19 @@
 # SSH login user: the service user has no login shell, so you connect as a
 # normal sudo-capable user. Pass `user@host`, or set EINK_SSH_USER — a bare
 # hostname connects as `<service-user>@host` and fails with "Permission denied
-# (publickey)". That user needs `sudo`; this script allocates a TTY (`ssh -tt`)
-# so an ordinary password prompt works (issue #82). NOPASSWD sudo also works.
+# (publickey)". That user needs `sudo` (password prompt or NOPASSWD both work).
 #
-# The `code` path just fetches the release tarball, repoints ~/app, and runs the
-# release's own `scripts/install.sh` on the Pi — the same script docs/runbook.md
-# §5 has the operator run by hand (issue #81). install.sh does the Python
-# guard (3.11–3.13, #66), the lgpio/spidev build toolchain, and the hash-locked
-# `pip install --require-hashes -r requirements.lock` (SECURITY.md §6, #68).
+# How the remote steps run: each is written to a temp script on the Pi and run
+# with a single `sudo bash <script>` under `ssh -tt`. The PTY exists only for a
+# possible sudo password prompt; the script is a real file, so stdin is never
+# consumed and the shell is non-interactive (issue #119 — an earlier fix piped
+# a heredoc to `ssh -tt … bash -s`, which ran interactively and hung at the
+# sudo prompt). Inside, root drops to the service user with `runuser` — no
+# nested sudo, no RunAs-target password.
 #
 # Usage:
 #   scripts/deploy.sh code    [user@]<pi-host> [VERSION]  # fetch release + install + restart
-#   scripts/deploy.sh secrets [user@]<pi-host>            # rsync local ~/.config/eink-calendar/ to the Pi
+#   scripts/deploy.sh secrets [user@]<pi-host>            # push credential/token files to the Pi
 #   scripts/deploy.sh all     [user@]<pi-host> [VERSION]  # secrets, then code
 #
 # VERSION is a release tag such as v1.0.0. When omitted, the newest tag reachable
@@ -39,7 +40,6 @@
 #
 # Environment:
 #   EINK_SERVICE_USER  service user on the Pi   (default: eink-calendar)
-#   EINK_HOME          service user's home      (default: /home/<service user>)
 #   EINK_SERVICE       systemd unit name        (default: eink-calendar)
 #   EINK_CONFIG_DIR    local secrets dir        (default: $HOME/.config/eink-calendar)
 #   EINK_REPO_SLUG     GitHub <owner>/<repo>    (default: parsed from `origin`)
@@ -49,7 +49,6 @@
 set -euo pipefail
 
 SERVICE_USER="${EINK_SERVICE_USER:-eink-calendar}"
-SERVICE_HOME="${EINK_HOME:-/home/${SERVICE_USER}}"
 SERVICE="${EINK_SERVICE:-eink-calendar}"
 CONFIG_DIR="${EINK_CONFIG_DIR:-$HOME/.config/eink-calendar}"
 
@@ -60,8 +59,7 @@ ssh_host() {
   if [ -n "${EINK_SSH_USER:-}" ]; then
     echo "${EINK_SSH_USER}@${host}"
   elif [ "${host}" != "${host#*@}" ]; then
-    # already user@host
-    echo "${host}"
+    echo "${host}"                       # already user@host
   else
     echo "deploy: '${host}' has no login user — connecting as your default SSH user." >&2
     echo "        If that is wrong you'll get 'Permission denied (publickey)'; pass" >&2
@@ -85,45 +83,59 @@ repo_slug() {
   esac
 }
 
+# run_remote_root <target> [args...] < script
+#   Stream a script (stdin) to a temp file on the Pi, then run it once as root
+#   with `sudo bash <file> [args...]` under a PTY. The script is a file, so
+#   `sudo` can prompt for a password on the PTY without eating the script
+#   (issue #119). Positional args reach the script as $1, $2, … .
+run_remote_root() {
+  local target="$1"; shift
+  local remote="/tmp/eink-deploy-$$.sh"
+  # ${remote} is expanded client-side on purpose — it's our own PID-derived path.
+  # shellcheck disable=SC2029
+  ssh "${target}" "cat > '${remote}' && chmod 700 '${remote}'"
+  local q="" a
+  for a in "$@"; do q+=" $(printf '%q' "${a}")"; done
+  # shellcheck disable=SC2029
+  ssh -tt "${target}" "sudo bash '${remote}'${q}; rc=\$?; rm -f '${remote}'; exit \$rc"
+}
+
 deploy_code() {
   local target; target="$(ssh_host "$1")"
   local version="${2:-}"
   if [ -z "${version}" ]; then
     version="$(git describe --tags --abbrev=0)" || die "no local tags; pass VERSION explicitly"
   fi
+  [[ "${version}" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "VERSION '${version}' is not a vX.Y.Z release tag"
+
   local slug; slug="$(repo_slug)"
   local tarball="https://github.com/${slug}/archive/refs/tags/${version}.tar.gz"
   # GitHub's tag archive extracts to <repo>-<version without leading v>
-  local reponame="${slug#*/}"
-  local dir="${reponame}-${version#v}"
+  local dir="${slug#*/}-${version#v}"
 
   echo "==> Deploying ${slug} ${version} to ${target}"
-  # -tt forces a TTY so an ordinary `sudo` password prompt works on the Pi
-  # (issue #82); NOPASSWD sudo is fine too.
-  ssh -tt "${target}" \
-    SERVICE="${SERVICE}" SERVICE_USER="${SERVICE_USER}" \
-    TARBALL="${tarball}" RELEASE_DIR="${dir}" \
-    'bash -s' <<'REMOTE'
+  run_remote_root "${target}" "${SERVICE_USER}" "${tarball}" "${dir}" "${SERVICE}" <<'SCRIPT'
 set -euo pipefail
+SERVICE_USER="$1"; TARBALL="$2"; RELEASE_DIR="$3"; SERVICE="$4"
 
 HOME_DIR="$(getent passwd "${SERVICE_USER}" | cut -d: -f6)"
 [ -n "${HOME_DIR}" ] || { echo "deploy: service user ${SERVICE_USER} not found — see docs/runbook.md §4" >&2; exit 1; }
 
 # 1. Fetch + extract the release and repoint ~/app, as the service user.
-sudo -u "${SERVICE_USER}" -H TARBALL="${TARBALL}" RELEASE_DIR="${RELEASE_DIR}" bash -s <<'FETCH'
-set -euo pipefail
-cd ~
-[ -d "${RELEASE_DIR}" ] || curl -fsSL "${TARBALL}" | tar xz
-ln -sfn "${RELEASE_DIR}" app
-FETCH
+runuser -u "${SERVICE_USER}" -- bash -c '
+  set -euo pipefail
+  cd ~
+  [ -d "$1" ] || curl -fsSL "$2" | tar xz
+  ln -sfn "$1" app
+' _ "${RELEASE_DIR}" "${TARBALL}"
 
 # 2. Run the release's own installer (same script as docs/runbook.md §5).
-sudo EINK_SERVICE_USER="${SERVICE_USER}" bash -c "cd '${HOME_DIR}/${RELEASE_DIR}' && ./scripts/install.sh"
+EINK_SERVICE_USER="${SERVICE_USER}" bash -c 'cd "$1/$2" && exec ./scripts/install.sh' _ "${HOME_DIR}" "${RELEASE_DIR}"
 
 # 3. Restart the service.
-sudo systemctl restart "${SERVICE}.service"
-sudo systemctl --no-pager --lines=5 status "${SERVICE}.service" || true
-REMOTE
+systemctl restart "${SERVICE}.service"
+systemctl --no-pager --lines=5 status "${SERVICE}.service" || true
+SCRIPT
   echo "==> Code deploy complete (${version})"
 }
 
@@ -144,18 +156,18 @@ deploy_secrets() {
     --include='*_credentials.json' --include='*_token.json' --exclude='*' \
     --chmod=D700,F600 "${CONFIG_DIR}/" "${target}:${stage}/"
 
-  echo "==> Installing into ${SERVICE_HOME}/.config/eink-calendar/ as ${SERVICE_USER}"
-  # -tt so `sudo` can prompt for a password (issue #82).
-  ssh -tt "${target}" STAGE="${stage}" SERVICE_USER="${SERVICE_USER}" 'bash -s' <<'REMOTE'
+  echo "==> Installing into ~${SERVICE_USER}/.config/eink-calendar/ as ${SERVICE_USER}"
+  run_remote_root "${target}" "${SERVICE_USER}" "${stage}" <<'SCRIPT'
 set -euo pipefail
+SERVICE_USER="$1"; STAGE="$2"
 trap 'rm -rf "${STAGE}"' EXIT
 DEST="$(getent passwd "${SERVICE_USER}" | cut -d: -f6)/.config/eink-calendar"
-sudo install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" -m 700 "${DEST}"
-sudo rsync -a --delete \
+install -d -o "${SERVICE_USER}" -g "${SERVICE_USER}" -m 700 "${DEST}"
+rsync -a --delete \
   --include='*_credentials.json' --include='*_token.json' --exclude='*' \
   --chown="${SERVICE_USER}:${SERVICE_USER}" "${STAGE}/" "${DEST}/"
-sudo find "${DEST}" -maxdepth 1 -type f \( -name '*_credentials.json' -o -name '*_token.json' \) -exec chmod 600 {} +
-REMOTE
+find "${DEST}" -maxdepth 1 -type f \( -name '*_credentials.json' -o -name '*_token.json' \) -exec chmod 600 {} +
+SCRIPT
   echo "==> Secrets sync complete (credential/token files only; config.yaml untouched)"
 }
 
