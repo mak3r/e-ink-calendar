@@ -34,16 +34,28 @@ Replace `<owner>/<repo>` and the example paths with your own values.
 2. In the Imager's advanced options set the hostname, enable SSH, and configure Wi‑Fi / locale.
 3. Boot the Pi and SSH in.
 
-## 3. Enable SPI
+## 3. Enable SPI and I2C
 
-The Inky panel talks over SPI.
+The Inky panel is driven over SPI, and `inky.auto()` reads the panel's model
+from an EEPROM **over I2C** — both buses must be on (issue #88).
 
 ```bash
 sudo raspi-config nonint do_spi 0   # 0 = enable
+sudo raspi-config nonint do_i2c 0   # 0 = enable
+```
+
+Current `inky` (2.x) manages the SPI chip-select line itself via `gpiod` and
+aborts (`Chip Select: (line 8, GPIO8) currently claimed by spi0 CS0`) if the
+kernel SPI driver is holding it. Free GPIO7/8 by adding the no-chip-select
+overlay:
+
+```bash
+# append to /boot/firmware/config.txt, below the existing dtparam=spi=on
+echo 'dtoverlay=spi0-0cs' | sudo tee -a /boot/firmware/config.txt
 sudo reboot
 ```
 
-After reboot, confirm `/dev/spidev0.0` exists.
+After reboot, confirm **both** `/dev/spidev0.0` and `/dev/i2c-1` exist.
 
 ## 4. Create a dedicated service user
 
@@ -52,8 +64,11 @@ The calendar runs as its own non-sudo system user — never as `pi` or root
 
 ```bash
 sudo useradd --system --create-home --shell /usr/sbin/nologin eink-calendar
-sudo usermod -aG spi,gpio eink-calendar
+sudo usermod -aG spi,gpio,i2c eink-calendar
 ```
+
+The `i2c` group is what lets the service user read `/dev/i2c-1` for EEPROM
+detection (§3, issue #88).
 
 That user owns its own `~/.config/eink-calendar/` directory; secrets there are
 mode `0600` and `config.yaml` is `0640` (§6).
@@ -325,6 +340,9 @@ Run once on real hardware and record the results here:
 
 | Check | How | Result |
 |---|---|---|
+| `/dev/spidev0.0` and `/dev/i2c-1` both present | `ls -l /dev/spidev0.0 /dev/i2c-1` | _fill in_ |
+| Panel EEPROM visible on I2C | `i2cdetect -y 1` shows a device at `0x50` | _fill in_ |
+| App starts clean **as the service user** | `sudo -u eink-calendar -H ~eink-calendar/app/.venv/bin/python -m eink_calendar.app` (exercises SPI CS + I2C + lgpio inside the systemd sandbox constraints) | _fill in_ |
 | Panel detected | `python3 -c "from inky.auto import auto; print(auto().resolution)"` | _fill in_ |
 | `display.resolution` in config matches the line above | edit `config.yaml` | _fill in_ |
 | Panel actually refreshes with the composited image | watch after `systemctl start` | _fill in_ |
@@ -343,6 +361,17 @@ Run once on real hardware and record the results here:
 `journalctl -u eink-calendar.service -e`. If SPI is disabled you'll see a device
 error — re-run section 3. A blank panel with a healthy log usually means the
 cache is empty and the first fetch failed; see the auth items below.
+
+**`RuntimeError: No EEPROM detected!` in the log**
+`inky.auto()` reads the panel model over I2C and I2C is off, or the service user
+isn't in the `i2c` group. Re-run section 3 (`do_i2c 0`), confirm `/dev/i2c-1`
+and `i2cdetect -y 1` shows `0x50`, and check `groups eink-calendar` includes
+`i2c` (section 4).
+
+**`Chip Select: (line 8, GPIO8) currently claimed by spi0 CS0`**
+The kernel SPI driver is holding the chip-select line `inky` 2.x wants to manage
+itself. Add `dtoverlay=spi0-0cs` under `dtparam=spi=on` in
+`/boot/firmware/config.txt` and reboot (section 3).
 
 **Display froze on an old image**
 By design: a failed fetch keeps the last good render rather than blanking. Check
