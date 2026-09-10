@@ -167,9 +167,10 @@ explicit arg → `$EINK_CALENDAR_CONFIG` → `~/.config/eink-calendar/config.yam
 
 ```yaml
 display:
-  driver: mock                 # "inky" | "mock"
-  mock_output_path: "./data/preview.png"
-  mock_auto_open: true          # open the PNG after each render (dev convenience)
+  driver: mock                 # "inky" | "mock"       [env-specific]
+  output_path: "data/last_render.png"  # both drivers archive each frame here;
+                                        # relative → working dir (#105/#107) [env-specific]
+  mock_auto_open: true          # open the PNG after each render (dev convenience) [env-specific]
   resolution: [800, 480]        # two positive ints; confirm vs inky.auto().resolution at bring-up
 
 refresh:
@@ -454,6 +455,11 @@ never `main` HEAD.
 ## 12. Known open design questions
 
 - ~~**#47** — canonical install method~~ **resolved: release tarball** (see §9).
+- ~~**#110** — per-environment config (dev mock vs Pi inky)~~ **resolved:
+  Pi-authored config, formalized** — see
+  `.claude/plans/config-per-environment-management.md`. §4 above is unchanged
+  except the env-specific keys are now marked; `deploy.sh` never syncs
+  `config.yaml`.
 - **#15** — `DevicePolicy`/`DeviceAllow` tightening for SPI/GPIO, pending real
   hardware.
 - Automated lint rule for "no hex/RGB literals outside `render/palette.py`" —

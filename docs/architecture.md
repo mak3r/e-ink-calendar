@@ -161,7 +161,9 @@ explicit arg -> `$EINK_CALENDAR_CONFIG` -> `~/.config/eink-calendar/config.yaml`
 ```yaml
 display:
   driver: mock                 # "inky" | "mock"
-  mock_output_path: "./data/preview.png"
+  output_path: "data/last_render.png"  # where both drivers archive each frame;
+                                        # relative paths resolve against the
+                                        # working dir (-> ~/app/data/... under systemd)
   mock_auto_open: true          # open the PNG after each render (dev convenience)
   resolution: [800, 480]        # two positive ints; confirm vs inky.auto().resolution at bring-up
 
@@ -210,6 +212,24 @@ config was loaded from.
   the six panel colors. `config.PALETTE_COLORS` is kept in sync with
   `render/palette.py::PALETTE` by convention (both keyed by the same names).
 - All file paths are `.expanduser()`-ed at load.
+
+### Per-environment config (dev Mac vs Pi)
+
+The dev Mac and the Pi each keep **their own `config.yaml`** — the Pi's is
+authored on the Pi (`docs/runbook.md` §6) and is the single source of truth for
+that device. `deploy.sh` never reads, writes, or deletes it; `deploy.sh secrets`
+syncs only credential/token files. This is deliberate: for a two-environment,
+single-operator project a load-time overlay or env-var override matrix would add
+a merge codepath and failure surface for no real benefit. (Full trade-off
+analysis: `.claude/plans/config-per-environment-management.md`, issue #110.)
+
+| Keys | | Rule |
+|---|---|---|
+| **Environment-specific** | `display.driver`, `display.resolution`, `display.output_path`, `display.mock_auto_open`, `buttons.pin_map` | Legitimately differ per machine. |
+| **Shared** | `accounts`, `refresh`, `view`, `buttons.bindings`, `cache.path` | Must stay identical on both machines, or they render different calendars. Keep in sync by hand; `config.example.yaml` marks each key. |
+
+Revisit this model (committed base + per-host overlay merged in `config.py`) only
+if the project ever runs more than one Pi or has more than one config author.
 
 ### OAuth setup flow
 
@@ -471,6 +491,8 @@ never `main` HEAD.
 
 - ~~**#47** — canonical install method~~ **resolved: release tarball** (see the
   Deploy section above).
+- ~~**#110** — per-environment config split~~ **resolved: Pi-authored config**
+  (see "Per-environment config" under Configuration above).
 - **#15** — `DevicePolicy`/`DeviceAllow` tightening for SPI/GPIO, pending real
   hardware; also the first-boot hardware bring-up checklist (`docs/runbook.md`
   §11).
