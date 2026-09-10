@@ -13,7 +13,7 @@ on:
 # Example for Node: add "uses: actions/setup-node@v4 with: {node-version: '22'}"
 
 jobs:
-  build-and-test:
+  test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -39,6 +39,23 @@ jobs:
 
       - name: Test
         run: make test
+
+  # Aggregate gate with a stable name. Branch protection on develop & main
+  # requires the "build-and-test" context; the matrix legs above report as
+  # "test (3.11)" / "test (3.13)", so this job fans them in under the required
+  # name (issue #71). `if: always()` + the explicit result check keeps a failed
+  # matrix from passing the gate via a skipped job.
+  build-and-test:
+    needs: [test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the test matrix to have succeeded
+        run: |
+          if [ "${{ needs.test.result }}" != "success" ]; then
+            echo "::error::test matrix result was '${{ needs.test.result }}'"
+            exit 1
+          fi
 
   lint:
     # Skip on direct pushes to feature/persona branches — the pull_request event covers those.
