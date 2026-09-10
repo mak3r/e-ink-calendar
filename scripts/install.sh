@@ -49,15 +49,17 @@ esac
 
 # --- Build toolchain for the lgpio / spidev C extensions ---------------------
 # Neither piwheels nor PyPI ships a wheel for them on cp3x, so they build from
-# their hash-verified sdists — swig + the Python headers are what the #66
-# failure was missing. numpy / Pillow install as wheels.
+# their hash-verified sdists. swig + the Python headers get the compile through
+# (issue #66); liblgpio-dev provides the shared library the lgpio extension
+# links against — without it the wheel build fails with "cannot find -llgpio"
+# (issue #85, confirmed on a real Trixie/arm64 Pi). numpy / Pillow are wheels.
 if command -v apt-get >/dev/null 2>&1; then
-  echo "==> Installing build toolchain (swig, Python headers)"
+  echo "==> Installing build toolchain (swig, Python headers, liblgpio)"
   apt-get update -qq
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    swig python3-dev build-essential libopenjp2-7
+    swig python3-dev build-essential libopenjp2-7 liblgpio-dev
 else
-  echo "install: apt-get not found — ensure swig + Python headers are present yourself" >&2
+  echo "install: apt-get not found — ensure swig, Python headers and liblgpio-dev are present yourself" >&2
 fi
 
 # --- venv + hash-locked runtime, owned by the service user ------------------
