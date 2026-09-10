@@ -37,8 +37,6 @@ __all__ = ["App", "main"]
 
 log = logging.getLogger("eink_calendar")
 
-_ARCHIVE_PATH = "data/last_render.png"
-
 
 class App:
     def __init__(self, config: AppConfig) -> None:
@@ -49,9 +47,10 @@ class App:
 
         self._display = create_display(
             config.display.driver,
-            archive_path=_ARCHIVE_PATH,
+            archive_path=config.display.output_path,
             auto_open=config.display.mock_auto_open,
         )
+        log.info("archiving each frame to %s", config.display.output_path)
         self._buttons = create_buttons(
             config.display.driver,
             pin_map=config.buttons.pin_map,
