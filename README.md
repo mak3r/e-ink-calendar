@@ -32,6 +32,8 @@ A Mac (or any non-GPIO machine) is all you need for development — see below.
 - Keeps the last good render on screen if a refresh fails — the wall never goes
   blank.
 
+![Day view: a column of deduplicated, color-coded event cards with a calendar-key legend and an overflow row for days with more events than fit](docs/images/day-view.png)
+
 ## Quick start
 
 1. **Set up a local environment.** From the repo root:
