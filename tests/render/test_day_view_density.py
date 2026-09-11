@@ -1,10 +1,16 @@
-"""Regression coverage for #151: day-view light-day density tiers.
+"""Regression coverage for #151/#160: day-view density tiers and stacking.
 
-See ``.claude/plans/day-view-light-day-scaling.md`` for the design this
-implements. Covers the tier-selection boundaries, the "space-around"
-vertical-distribution math for a light day, the busy-day worst case staying
-pixel-equivalent to the original fixed compact sizing, and the safety-net
-fallback for a card too tall to fit even at the compact tier.
+#151 introduced density tiers plus a "space-around" distribution that spread
+cards apart; #160 replaced that with plain top-down stacking (fixed gap only,
+no distributed slack) and unified tier selection so it applies identically
+whether or not ``max_entries`` trimmed the list. See
+``.claude/plans/day-view-density-stacking-fix.md`` (supersedes
+``day-view-light-day-scaling.md`` §3.1/§3.2). Covers the tier-selection
+boundaries, top-down stacking with a fixed gap on a light day, a lower
+``max_entries``'s own worst case landing on a bigger tier (not hardcoded
+compact), the ``max_entries=9`` worst case staying pixel-equivalent to the
+original fixed compact sizing, and the safety-net fallback for a card too
+tall to fit even at the compact tier.
 """
 
 from __future__ import annotations
@@ -91,10 +97,10 @@ def test_compact_tier_matches_original_pre_151_constants():
     )
 
 
-def test_busy_day_worst_case_uses_fixed_compact_stacking_with_no_slack():
-    """max_entries=9 worst case (8 visible + overflow): compact tier, cards
-    top-anchored immediately after the rule with the fixed 5px gap — the
-    original algorithm, not space-around."""
+def test_busy_day_worst_case_stays_pixel_equivalent_to_original_compact_tier():
+    """max_entries=9 worst case (8 visible + overflow) must still land on the
+    compact tier and stack top-down with the fixed 5px gap, unchanged since
+    #127/#151, now arrived at via the same unified path every day uses."""
     when = datetime(2026, 9, 9, tzinfo=timezone.utc).date()
     image = day_view.render(_events(12), when, RESOLUTION)
     start_y, column_right = _start_y_and_column_right(image.width)
@@ -110,11 +116,10 @@ def test_busy_day_worst_case_uses_fixed_compact_stacking_with_no_slack():
     assert all(abs(g - day_view._TIER_COMPACT.card_gap) <= 1 for g in gaps), gaps
 
 
-def test_light_day_space_around_gaps_are_equal():
-    """A 2-event (spacious-tier) day spreads its cards with equal ``slot``
-    slack per the plan's §3.2 formula: leading and trailing gaps are pure
-    ``slot``, and the inter-card gap is the tier's base ``card_gap`` plus
-    that same ``slot`` (``gap_between = base_gap + slot``)."""
+def test_light_day_cards_stack_top_down_with_fixed_gap():
+    """Regression guard for #160 bug 1: cards must not spread apart with
+    distributed slack — they stack immediately under the rule with only the
+    tier's fixed gap between them, leaving any leftover space blank below."""
     when = datetime(2026, 9, 9, tzinfo=timezone.utc).date()
     image = day_view.render(_events(2), when, RESOLUTION)
     start_y, column_right = _start_y_and_column_right(image.width)
@@ -123,15 +128,30 @@ def test_light_day_space_around_gaps_are_equal():
     bands = _bands(rows)
     assert len(bands) == 2, bands
 
-    bottom_bound = image.height - MARGIN
     leading = bands[0][0] - start_y
-    between = bands[1][0] - bands[0][1] - 1
-    trailing = (bottom_bound - 1) - bands[1][1]
+    gap = bands[1][0] - bands[0][1] - 1
+    assert leading <= 1, f"cards should stack immediately under the rule, got a {leading}px leading gap"
+    assert abs(gap - day_view._TIER_SPACIOUS.card_gap) <= 1, gap
 
-    assert leading > 0 and between > 0 and trailing > 0, (leading, between, trailing)
-    assert abs(leading - trailing) <= 2, (leading, trailing)
-    slot = (leading + trailing) / 2
-    assert abs(between - (slot + day_view._TIER_SPACIOUS.card_gap)) <= 2, (between, slot)
+
+def test_lower_max_entries_worst_case_lands_on_a_bigger_tier():
+    """Regression guard for #160 bug 2: a household's own configured
+    ``max_entries`` worst case must size by how many cards actually render,
+    not hardcode the compact tier meant for the default of 9."""
+    when = datetime(2026, 9, 9, tzinfo=timezone.utc).date()
+    image = day_view.render(_events(6), when, RESOLUTION, max_entries=5)
+    start_y, column_right = _start_y_and_column_right(image.width)
+
+    rows = _ink_rows(image, start_y - 5, image.height, MARGIN, column_right)
+    bands = _bands(rows)
+
+    # 4 visible cards (max_entries=5 -> cap of 4 before the overflow row) + 1 overflow row.
+    assert len(bands) == 5, f"expected 4 cards + overflow row, got {len(bands)} bands: {bands}"
+
+    gaps = [b2[0] - b1[1] - 1 for b1, b2 in itertools.pairwise(bands)]
+    assert all(abs(g - day_view._TIER_COMFORTABLE.card_gap) <= 1 for g in gaps), (
+        gaps, "expected comfortable-tier spacing, not compact"
+    )
 
 
 def test_pathological_long_summary_folds_into_overflow_via_safety_net():
