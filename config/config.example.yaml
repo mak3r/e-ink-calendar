@@ -26,6 +26,7 @@ refresh:                   # SHARED — keep identical
 view:                      # SHARED — keep identical
   default: day
   week_starts_on: monday
+  # day_max_entries: 9      # 5-9, caps day-view cards before overflow (default 9)
 
 buttons:
   pin_map: {A: 5, B: 6, C: 16, D: 24}   # ENV-SPECIFIC  (confirm against Pimoroni's current pinout docs during Pi bring-up)
