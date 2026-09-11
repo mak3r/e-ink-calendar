@@ -326,12 +326,13 @@ Within a few seconds the panel should show the default view.
 
 `scripts/deploy.sh` is release-based — it fetches the release tarball, repoints
 `~eink-calendar/app`, runs the release's own `scripts/install.sh` (the §5
-installer), and restarts the service, all over SSH. Three subcommands:
+installer), and restarts the service, all over SSH. Four subcommands:
 
 ```bash
-scripts/deploy.sh code    [user@]<pi-host> [VERSION]   # fetch release → repoint ~/app → run install.sh → restart
-scripts/deploy.sh secrets [user@]<pi-host>             # push *_credentials.json / *_token.json to the Pi
-scripts/deploy.sh all     [user@]<pi-host> [VERSION]   # secrets, then code
+scripts/deploy.sh code         [user@]<pi-host> [VERSION]   # fetch release → repoint ~/app → run install.sh → restart
+scripts/deploy.sh secrets      [user@]<pi-host>             # push *_credentials.json / *_token.json to the Pi
+scripts/deploy.sh all          [user@]<pi-host> [VERSION]   # secrets, then code
+scripts/deploy.sh check-config [user@]<pi-host>             # optional: read-only pre-deploy sanity check, writes nothing
 ```
 
 `VERSION` is a release tag such as `vX.Y.Z`; omitted, it uses the newest tag in
@@ -364,6 +365,25 @@ Environment overrides (all optional): `EINK_SERVICE_USER` (default
 (default `eink-calendar`), `EINK_CONFIG_DIR` (default `$HOME/.config/eink-calendar`
 — the *local* rsync source), `EINK_REPO_SLUG` (default: parsed from `origin`),
 `EINK_SSH_USER` (the sudo-capable login user, **not** the service user).
+
+### Checking for config drift before deploying (optional)
+
+`scripts/deploy.sh check-config [user@]<pi-host>` is a read-only pre-deploy
+sanity check — it writes nothing. It sudo-reads the Pi's `config.yaml` and
+compares only the keys that must stay identical between the dev Mac and the
+Pi (`accounts`, `refresh`, `view`, `buttons.bindings`, `cache.path`);
+env-specific keys (`display.*`, `buttons.pin_map`) are intentionally excluded
+from the comparison. It prints a unified diff and exits non-zero on drift, or
+prints `"… are in sync"` and exits 0.
+
+It needs `python3` + PyYAML locally — the same local environment set up in §8
+(`pip install -r requirements-dev.txt`, which pulls in `requirements-base.txt`).
+Without it, it fails with:
+
+    check-config: PyYAML not importable — `pip install pyyaml` (it ships in requirements-base.txt)
+
+Run it before `deploy.sh code`/`all` as an optional check that the shared
+config hasn't drifted since the last deploy.
 
 ### Upgrading a Pi from a pre-0.3.0 release
 

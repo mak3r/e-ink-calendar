@@ -26,11 +26,15 @@ def render(
     when: date | None = None,
     resolution: tuple[int, int] = DEFAULT_RESOLUTION,
     week_starts_on: str = "monday",
+    calendar_labels: dict[str, str] | None = None,
+    day_max_entries: int = 9,
 ) -> Image.Image:
     """Render ``events`` for ``view_mode`` (``"day"``/``"week"``/``"month"``).
 
     ``view_mode`` accepts a plain string or a ``view_state.ViewMode`` (which is a
-    ``str`` enum). ``when`` defaults to today.
+    ``str`` enum). ``when`` defaults to today. ``calendar_labels`` and
+    ``day_max_entries`` are day-view-only (a ``color -> label`` legend mapping
+    and the entry cap before the overflow row); ignored by week/month.
     """
     # A str-mixed Enum's str() is "ViewMode.DAY" on 3.11, so read .value first.
     mode = str(getattr(view_mode, "value", view_mode)).lower()
@@ -40,7 +44,13 @@ def render(
     ordered = sorted(events, key=lambda e: (e.start, e.end, e.id))
 
     if mode == "day":
-        return day_view.render(ordered, day, resolution)
+        return day_view.render(
+            ordered,
+            day,
+            resolution,
+            calendar_labels=calendar_labels,
+            max_entries=day_max_entries,
+        )
     if mode == "week":
         return week_view.render(ordered, day, resolution, week_starts_on)
     if mode == "month":

@@ -44,6 +44,11 @@ class App:
         self._tz = ZoneInfo(config.refresh.timezone)
         self._view = ViewMode.from_name(config.view.default)
         self._cache = load_cache(config.cache.path)
+        self._calendar_labels = {
+            calendar.color: calendar.label
+            for account in config.accounts
+            for calendar in account.calendars
+        }
 
         self._display = create_display(
             config.display.driver,
@@ -145,6 +150,8 @@ class App:
             when=self._today(),
             resolution=self._config.display.resolution,
             week_starts_on=self._config.view.week_starts_on,
+            calendar_labels=self._calendar_labels,
+            day_max_entries=self._config.view.day_max_entries,
         )
         self._display.set_image(image)
         self._display.show()

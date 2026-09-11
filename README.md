@@ -34,17 +34,27 @@ A Mac (or any non-GPIO machine) is all you need for development — see below.
 
 ## Quick start
 
-1. **Develop on a Mac.** The codebase imports and runs with no GPIO hardware;
+1. **Set up a local environment.** From the repo root:
+
+   ```bash
+   python3 -m venv .venv
+   .venv/bin/pip install -r requirements-dev.txt
+   ```
+
+   `requirements-dev.txt` pulls in `requirements-base.txt`, so this one install
+   covers both. Activate the venv (`source .venv/bin/activate`) or prefix
+   commands with `.venv/bin/` — the examples below assume it's active.
+2. **Develop on a Mac.** The codebase imports and runs with no GPIO hardware;
    `inky` and `gpiozero` are loaded lazily only when the config selects the real
    driver. `scripts/render_once.py` is the fast iteration loop — it renders the
    configured view through the mock display driver to a PNG.
-2. **Configure.** Copy `config/config.example.yaml` to
+3. **Configure.** Copy `config/config.example.yaml` to
    `~/.config/eink-calendar/config.yaml` (outside the repo checkout) and fill in
    real values. OAuth credentials and tokens live in `~/.config/eink-calendar/`
    too — never in the repo.
-3. **Authorise each Google account once** with `scripts/setup_oauth.py --account <name>`,
+4. **Authorise each Google account once** with `scripts/setup_oauth.py --account <name>`,
    run by a human with a browser.
-4. **Deploy to the Pi** and run as a systemd service (`python -m eink_calendar.app`).
+5. **Deploy to the Pi** and run as a systemd service (`python -m eink_calendar.app`).
 
 Full setup, wiring, and operational procedures are in the docs below.
 
@@ -53,7 +63,8 @@ Full setup, wiring, and operational procedures are in the docs below.
 `scripts/render_once.py` is the recommended fast iteration loop for layout,
 colour, and font work — it renders one frame through the mock display driver on
 a Mac with no Pi and no GPIO. It writes `data/last_render.png` at
-`config.display.resolution`.
+`config.display.resolution`. These examples assume the venv from Quick start
+step 1 is active (or prefix each command with `.venv/bin/`).
 
 ```bash
 # one-shot render of the current cache, opens the PNG — no network, no Pi
