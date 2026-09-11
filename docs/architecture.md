@@ -208,6 +208,9 @@ config was loaded from.
   {monday, sunday}.
 - `view.day_max_entries` is an int between 5 and 9 (default 9) — caps the
   number of day-view cards shown before the rest fold into an overflow row.
+  Card size, padding, and spacing also scale across three density tiers
+  based on how many cards actually render (1-3 spacious, 4-6 comfortable,
+  7-9 compact), so a light day fills the panel instead of leaving dead space.
 - `buttons.pin_map` is str->int; `buttons.bindings` values are one of
   {cycle_view, force_refresh, noop}.
 - `accounts` is non-empty; each `calendars` is non-empty.
