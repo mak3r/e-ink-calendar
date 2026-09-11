@@ -1,8 +1,10 @@
 # Day view: scale cards on light days instead of leaving dead space
 
-Status: **approved** — ready for `persona/developer`. Follow-up to
-[[day-view-card-redesign]] (`.claude/plans/day-view-card-redesign.md`), which
-this does not revise except where noted in §2. Addresses issue #150.
+Status: **implemented** in #155 (closes #151, itself addressing #150).
+Follow-up to [[day-view-card-redesign]]
+(`.claude/plans/day-view-card-redesign.md`), which this does not revise
+except where noted in §2. §3.1 was clarified post-hoc to match a resolution
+made during implementation — see the "Busy-day exception" note there.
 
 ---
 
@@ -42,6 +44,20 @@ orthogonal to, and runs after, the overflow-cap decision from
 appears, only how the cards above it are sized). Tiers are keyed to absolute
 count, not to `max_entries`, because a mostly-empty panel looks the same
 regardless of what the cap is configured to.
+
+**Busy-day exception, clarified during implementation (#155):** tiering and
+the space-around distribution (§3.2) apply *only* when `max_entries` has not
+trimmed the list — i.e. `overflow` is empty. The moment the cap has trimmed
+anything, the day is definitionally not "light," and that render always uses
+the fixed **compact** tier with the original top-anchored, fixed-gap
+stacking (no space-around). This isn't just a simplification: it's required
+by §5's "8-cards-plus-overflow worst case is pixel-equivalent to before"
+criterion, since that worst case was tuned with deliberate slack ("room to
+spare" — see the original `day-view-card-redesign.md` sizing comment), and
+unconditionally applying space-around would consume that slack and change
+its pixel output. A day with exactly `max_entries` visible groups and no
+overflow (nothing trimmed) still gets compact-tier space-around — only the
+*trimmed* case is exempted.
 
 | Tier | `len(visible)` | Scale | `_FONT_LABEL` | `_FONT_SUMMARY` | `_CARD_PAD` | `_STRIPE_W` | `_CORNER_RADIUS` | base `_CARD_GAP` |
 |---|---|---|---|---|---|---|---|---|
@@ -85,9 +101,10 @@ with a dead zone below — without needing special-case code for `n == 1`.
 **Safety net:** if `leftover` would be negative at the selected tier (should
 not happen in practice given the tier boundaries above, but a long wrapped
 summary could in principle push a card taller than assumed), fall back one
-tier more compact and recompute; if still negative at the compact tier, that
-is the existing "doesn't fit" case `render()` already handles by folding the
-offending card and everything after it into the overflow row
+tier more compact and recompute; if still negative at the compact tier,
+switch to the original top-anchored, fixed-gap stacking (the same routine
+the busy-day path uses) at that tier, folding whatever doesn't fit into the
+overflow row — the existing "doesn't fit" case `render()` already handles
 (`day-view-card-redesign.md`'s existing safety-net logic) — no new failure
 mode is introduced.
 
