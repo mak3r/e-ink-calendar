@@ -7,11 +7,13 @@ Month views.
 This guide is generic and public — it assumes no prior context on the project.
 Replace `<owner>/<repo>` and the example paths with your own values.
 
-> **Status:** Cross-checked against the merged infra from the v0.2.0 Pi bring-up
-> cluster — `scripts/install.sh` (#81), `scripts/deploy.sh` / `ssh -tt` sudo
-> (#82), `liblgpio-dev` (#85), the `data/` + `LG_WD` systemd fixes (#86), SPI/I2C
-> (#88) — plus `SECURITY.md` (#4) and `setup_oauth.py` (#14). §11 (hardware
-> bring-up) still needs a full pass on real hardware.
+> **Status:** Cross-checked against the merged v0.2.0–v0.3.0 infra —
+> `scripts/install.sh` (#81), `scripts/deploy.sh` remote-step model (#82 → #119),
+> `liblgpio-dev` (#85), the `data/` + `LG_WD` systemd fixes (#86), SPI/I2C (#88),
+> per-environment config + `display.output_path` (#106/#110/#114) — plus
+> `SECURITY.md` (#4) and `setup_oauth.py` (#14). §11 (hardware bring-up) still
+> needs a full pass on real hardware; the panel-refresh failure is tracked in
+> #100.
 
 ---
 
@@ -328,7 +330,7 @@ installer), and restarts the service, all over SSH. Three subcommands:
 
 ```bash
 scripts/deploy.sh code    [user@]<pi-host> [VERSION]   # fetch release → repoint ~/app → run install.sh → restart
-scripts/deploy.sh secrets [user@]<pi-host>             # rsync local ~/.config/eink-calendar/ → Pi (dir 0700 / files 0600 enforced)
+scripts/deploy.sh secrets [user@]<pi-host>             # push *_credentials.json / *_token.json to the Pi
 scripts/deploy.sh all     [user@]<pi-host> [VERSION]   # secrets, then code
 ```
 
@@ -340,9 +342,14 @@ on the Pi — only the §4–§7 setup (service user, `~/app` symlink, config di
 `eink-calendar` service user** (which has no login shell). Give the target as
 `user@pi-host` or set `EINK_SSH_USER`; a bare hostname connects as the host's
 default SSH user and, if that's wrong, fails with `Permission denied
-(publickey)`. That user needs `sudo` — the script runs `ssh -tt` so an ordinary
-sudo **password prompt works** (issue #82); passwordless (`NOPASSWD`) sudo is
-fine too but not required.
+(publickey)`. That user needs **`sudo`, and nothing more** — a password prompt
+and passwordless (`NOPASSWD`) sudo both work.
+
+Each remote step is written to a temp script on the Pi and run once as
+`sudo bash <script>` under `ssh -tt` (issue #119). The PTY exists only so `sudo`
+can prompt for a password; because the step is a real file, stdin is never
+consumed and the shell stays non-interactive. Inside, root drops to the service
+user with `runuser` — no nested sudo, no separate service-user password.
 
 Neither path touches the Pi's `config.yaml`. The `code` path doesn't go near
 `~/.config/eink-calendar/` at all; `deploy.sh secrets` syncs **only**
@@ -353,7 +360,7 @@ point the revoke/rotate procedure (§13) at `deploy.sh secrets` for pushing
 rotated tokens.
 
 Environment overrides (all optional): `EINK_SERVICE_USER` (default
-`eink-calendar`), `EINK_HOME` (default `/home/<service user>`), `EINK_SERVICE`
+`eink-calendar` — its home dir is read from `getent passwd`), `EINK_SERVICE`
 (default `eink-calendar`), `EINK_CONFIG_DIR` (default `$HOME/.config/eink-calendar`
 — the *local* rsync source), `EINK_REPO_SLUG` (default: parsed from `origin`),
 `EINK_SSH_USER` (the sudo-capable login user, **not** the service user).
