@@ -21,9 +21,7 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from eink_calendar.calendar_source.auth import load_credentials
 from eink_calendar.calendar_source.cache import CacheContents, load_cache, save_cache
-from eink_calendar.calendar_source.fetch import build_service, fetch_calendar_events
 from eink_calendar.calendar_source.models import Event
 from eink_calendar.config import AppConfig, ConfigError, load_config
 from eink_calendar.display.factory import create_display
@@ -97,6 +95,11 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _fetch(config: AppConfig, today: date) -> list[Event]:
+    # Imported lazily: --use-cache mode never calls this function, and must
+    # not require the google-auth/google-api-python-client stack (#132).
+    from eink_calendar.calendar_source.auth import load_credentials
+    from eink_calendar.calendar_source.fetch import build_service, fetch_calendar_events
+
     events: list[Event] = []
     for account in config.accounts:
         creds = load_credentials(account.token_file)
