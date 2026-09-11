@@ -174,6 +174,7 @@ refresh:
 view:
   default: day                  # "day" | "week" | "month"
   week_starts_on: monday        # "monday" | "sunday" (default monday)
+  day_max_entries: 9            # 5-9, caps day-view cards before overflow (default 9)
 
 buttons:
   pin_map: {A: 5, B: 6, C: 16, D: 24}          # label -> int GPIO pin; confirm vs Pimoroni pinout
@@ -205,6 +206,8 @@ config was loaded from.
 - `refresh.daily_time` matches `^([01]\d|2[0-3]):[0-5]\d$`.
 - `view.default` is one of {day, week, month}; `week_starts_on` is one of
   {monday, sunday}.
+- `view.day_max_entries` is an int between 5 and 9 (default 9) — caps the
+  number of day-view cards shown before the rest fold into an overflow row.
 - `buttons.pin_map` is str->int; `buttons.bindings` values are one of
   {cycle_view, force_refresh, noop}.
 - `accounts` is non-empty; each `calendars` is non-empty.
