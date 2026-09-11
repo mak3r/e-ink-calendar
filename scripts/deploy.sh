@@ -31,9 +31,15 @@
 # nested sudo, no RunAs-target password.
 #
 # Usage:
-#   scripts/deploy.sh code    [user@]<pi-host> [VERSION]  # fetch release + install + restart
-#   scripts/deploy.sh secrets [user@]<pi-host>            # push credential/token files to the Pi
-#   scripts/deploy.sh all     [user@]<pi-host> [VERSION]  # secrets, then code
+#   scripts/deploy.sh code         [user@]<pi-host> [VERSION]  # fetch release + install + restart
+#   scripts/deploy.sh secrets      [user@]<pi-host>            # push credential/token files to the Pi
+#   scripts/deploy.sh all          [user@]<pi-host> [VERSION]  # secrets, then code
+#   scripts/deploy.sh check-config [user@]<pi-host>            # read-only: diff the SHARED config keys
+#
+# check-config compares only the keys the dev Mac and Pi must keep identical
+# (accounts, refresh, view, buttons.bindings, cache.path) — never the
+# env-specific ones (display.*, buttons.pin_map). It writes nothing and exits
+# non-zero on drift. Needs python3 + PyYAML locally (both in requirements-*.txt).
 #
 # VERSION is a release tag such as v1.0.0. When omitted, the newest tag reachable
 # from the local checkout (`git describe --tags --abbrev=0`) is used.
@@ -173,14 +179,65 @@ SCRIPT
   echo "==> Secrets sync complete (credential/token files only; config.yaml untouched)"
 }
 
+check_config() {
+  local target; target="$(ssh_host "$1")"
+  local local_cfg="${CONFIG_DIR}/config.yaml"
+  [ -f "${local_cfg}" ] || die "local config not found: ${local_cfg}"
+  command -v python3 >/dev/null 2>&1 || die "check-config needs python3"
+
+  local pi_cfg; pi_cfg="$(mktemp)"
+  trap 'rm -f "${pi_cfg}"' EXIT
+
+  echo "==> Reading ${target}'s config.yaml (read-only, nothing is written)"
+  # config.yaml is 0640 owned by the service user; read it via sudo. Same
+  # passwordless-sudo baseline as pull_preview.sh / deploy.sh (#82).
+  # shellcheck disable=SC2029
+  ssh "${target}" "sudo cat -- \"\$(getent passwd '${SERVICE_USER}' | cut -d: -f6)/.config/eink-calendar/config.yaml\"" > "${pi_cfg}" \
+    || die "could not read the Pi config — passwordless sudo for ${target%%@*} required"
+  [ -s "${pi_cfg}" ] || die "the Pi config.yaml is empty or absent"
+
+  python3 - "${local_cfg}" "${pi_cfg}" <<'PY'
+import sys, json
+try:
+    import yaml
+except ImportError:
+    sys.exit("check-config: PyYAML not importable — `pip install pyyaml` (it ships in requirements-base.txt)")
+
+SHARED_TOP = ("accounts", "refresh", "view")
+
+def shared(cfg):
+    cfg = cfg or {}
+    out = {k: cfg[k] for k in SHARED_TOP if k in cfg}
+    for parent, child in (("buttons", "bindings"), ("cache", "path")):
+        section = cfg.get(parent) or {}
+        if child in section:
+            out.setdefault(parent, {})[child] = section[child]
+    return out
+
+local = shared(yaml.safe_load(open(sys.argv[1])))
+pi    = shared(yaml.safe_load(open(sys.argv[2])))
+
+if local == pi:
+    print("config: shared keys (accounts, refresh, view, buttons.bindings, cache.path) are in sync")
+    sys.exit(0)
+
+import difflib
+dump = lambda d: json.dumps(d, indent=2, sort_keys=True, default=str).splitlines()
+print("config: shared keys DIFFER —")
+print("\n".join(difflib.unified_diff(dump(pi), dump(local), "pi", "local", lineterm="")))
+sys.exit(1)
+PY
+}
+
 main() {
   local cmd="${1:-}"; local host="${2:-}"; local version="${3:-}"
-  [ -n "${host}" ] || die "usage: deploy.sh {code|secrets|all} [user@]<pi-host> [VERSION]  (SSH user needs sudo; see header)"
+  [ -n "${host}" ] || die "usage: deploy.sh {code|secrets|all|check-config} [user@]<pi-host> [VERSION]  (SSH user needs sudo; see header)"
   case "${cmd}" in
-    code)    deploy_code "${host}" "${version}" ;;
-    secrets) deploy_secrets "${host}" ;;
-    all)     deploy_secrets "${host}"; deploy_code "${host}" "${version}" ;;
-    *)       die "unknown command '${cmd}' (expected code|secrets|all)" ;;
+    code)         deploy_code "${host}" "${version}" ;;
+    secrets)      deploy_secrets "${host}" ;;
+    all)          deploy_secrets "${host}"; deploy_code "${host}" "${version}" ;;
+    check-config) check_config "${host}" ;;
+    *)            die "unknown command '${cmd}' (expected code|secrets|all|check-config)" ;;
   esac
 }
 
