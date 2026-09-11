@@ -1,10 +1,15 @@
 # Day view: scale cards on light days instead of leaving dead space
 
-Status: **implemented** in #155 (closes #151, itself addressing #150).
+Status: **implemented** in #155 (closes #151, itself addressing #150), **but
+§3.1 and §3.2 are superseded** by
+[[day-view-density-stacking-fix]] (`.claude/plans/day-view-density-stacking-fix.md`)
+after real-device testing found both the busy-day tier hardcoding and the
+space-around distribution produced worse results than intended. §3.3 ("what
+does not scale") is unaffected and still applies. Read the superseding plan
+for the current behavior; this file is kept for history.
 Follow-up to [[day-view-card-redesign]]
 (`.claude/plans/day-view-card-redesign.md`), which this does not revise
-except where noted in §2. §3.1 was clarified post-hoc to match a resolution
-made during implementation — see the "Busy-day exception" note there.
+except where noted in §2.
 
 ---
 
