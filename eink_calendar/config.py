@@ -53,6 +53,8 @@ _VALID_DRIVERS: frozenset[str] = frozenset({"inky", "mock"})
 _VALID_VIEWS: frozenset[str] = frozenset({"day", "week", "month"})
 _VALID_WEEK_START: frozenset[str] = frozenset({"monday", "sunday"})
 _VALID_BINDINGS: frozenset[str] = frozenset({"cycle_view", "force_refresh", "noop"})
+_DAY_MAX_ENTRIES_RANGE: tuple[int, int] = (5, 9)
+_DAY_MAX_ENTRIES_DEFAULT = 9
 
 _DAILY_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
@@ -82,6 +84,7 @@ class RefreshConfig:
 class ViewConfig:
     default: str
     week_starts_on: str
+    day_max_entries: int
 
 
 @dataclass(frozen=True)
@@ -270,7 +273,22 @@ def _build_view(section: dict[str, Any]) -> ViewConfig:
             f"view.week_starts_on must be one of {sorted(_VALID_WEEK_START)}, "
             f"got {week_starts_on!r}"
         )
-    return ViewConfig(default=default, week_starts_on=week_starts_on)
+
+    day_max_entries = section.get("day_max_entries", _DAY_MAX_ENTRIES_DEFAULT)
+    lo, hi = _DAY_MAX_ENTRIES_RANGE
+    if (
+        not isinstance(day_max_entries, int)
+        or isinstance(day_max_entries, bool)
+        or not (lo <= day_max_entries <= hi)
+    ):
+        raise ConfigError(
+            f"view.day_max_entries must be an integer between {lo} and {hi}, "
+            f"got {day_max_entries!r}"
+        )
+
+    return ViewConfig(
+        default=default, week_starts_on=week_starts_on, day_max_entries=day_max_entries
+    )
 
 
 def _build_buttons(section: dict[str, Any]) -> ButtonConfig:

@@ -72,12 +72,19 @@ def main(argv: list[str] | None = None) -> int:
         save_cache(config.cache.path, contents)
 
     view = args.view or config.view.default
+    calendar_labels = {
+        calendar.color: calendar.label
+        for account in config.accounts
+        for calendar in account.calendars
+    }
     image = render(
         view,
         contents.events,
         when=today,
         resolution=config.display.resolution,
         week_starts_on=config.view.week_starts_on,
+        calendar_labels=calendar_labels,
+        day_max_entries=config.view.day_max_entries,
     )
 
     archive_path = config.display.output_path
