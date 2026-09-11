@@ -73,6 +73,20 @@ class Event:
             location=raw.get("location"),
         )
 
+    def occurs_on(self, day: date) -> bool:
+        """Whether this event should be shown on ``day``.
+
+        All-day events' ``end`` is Google's *exclusive* all-day boundary (see
+        :func:`parse_api_datetime`) — a single-day all-day event has
+        ``end.date() == start.date() + 1 day``, so its last visible day is
+        ``day < end.date()``, not ``day <= end.date()``. Timed events keep an
+        inclusive end-day comparison since their ``end`` is a real instant
+        (e.g. a meeting ending at 00:30 the next day still touches that day).
+        """
+        if self.all_day:
+            return self.start.date() <= day < self.end.date()
+        return self.start.date() <= day <= self.end.date()
+
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-compatible dict (datetimes as ISO 8601 strings)."""
         return {

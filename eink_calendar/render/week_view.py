@@ -71,7 +71,7 @@ def render(
         )
 
         day_events = sorted(
-            (e for e in events if e.start.date() <= day <= e.end.date()),
+            (e for e in events if e.occurs_on(day)),
             key=lambda e: (not e.all_day, e.start),
         )
         y = grid_top + header_h + 4
