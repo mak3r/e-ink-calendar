@@ -59,7 +59,7 @@ def render(
                 continue
 
             day_events = sorted(
-                (e for e in events if e.start.date() <= day <= e.end.date()),
+                (e for e in events if e.occurs_on(day)),
                 key=lambda e: (not e.all_day, e.start),
             )
             by = y0 + 6 + line_h

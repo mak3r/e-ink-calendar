@@ -137,3 +137,39 @@ def test_empty_day_still_renders_header_and_placeholder():
     assert set(image.getdata()) <= _PALETTE_RGB
     # some ink exists (the header + "No events")
     assert any(v == (0, 0, 0) for v in image.getdata())
+
+
+def test_all_day_event_does_not_leak_into_the_day_after_it_ends():
+    """Regression guard for #140."""
+    start = datetime(2026, 9, 10, tzinfo=timezone.utc)
+    event = Event(
+        id="a",
+        summary="All-day reminder",
+        start=start,
+        end=start + timedelta(days=1),
+        all_day=True,
+        calendar_id="primary",
+        color="blue",
+    )
+    leak_day = start.date() + timedelta(days=1)
+
+    rendered = day_view.render([event], leak_day, RESOLUTION)
+    empty = day_view.render([], leak_day, RESOLUTION)
+    assert list(rendered.getdata()) == list(empty.getdata())
+
+
+def test_all_day_event_renders_on_its_own_day():
+    start = datetime(2026, 9, 10, tzinfo=timezone.utc)
+    event = Event(
+        id="a",
+        summary="All-day reminder",
+        start=start,
+        end=start + timedelta(days=1),
+        all_day=True,
+        calendar_id="primary",
+        color="blue",
+    )
+
+    rendered = day_view.render([event], start.date(), RESOLUTION)
+    empty = day_view.render([], start.date(), RESOLUTION)
+    assert list(rendered.getdata()) != list(empty.getdata())

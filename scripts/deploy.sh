@@ -102,8 +102,12 @@ run_remote_root() {
   ssh "${target}" "cat > '${remote}' && chmod 700 '${remote}'"
   local q="" a
   for a in "$@"; do q+=" $(printf '%q' "${a}")"; done
+  # The first ssh call above fully consumed our stdin (the heredoc script
+  # body), so this call must not inherit it — sudo's PTY prompt would have
+  # nothing live to read a password from and hang forever (#138). Give it
+  # its own connection to the real terminal instead.
   # shellcheck disable=SC2029
-  ssh -tt "${target}" "sudo bash '${remote}'${q}; rc=\$?; rm -f '${remote}'; exit \$rc"
+  ssh -tt "${target}" "sudo bash '${remote}'${q}; rc=\$?; rm -f '${remote}'; exit \$rc" < /dev/tty
 }
 
 deploy_code() {

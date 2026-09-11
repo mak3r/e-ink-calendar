@@ -68,10 +68,6 @@ class _Group:
     colors: list[str] = field(default_factory=list)
 
 
-def _on_day(event: Event, day: date) -> bool:
-    return event.start.date() <= day <= event.end.date()
-
-
 def _swatch_color(event: Event) -> str:
     return event.color if event.color in ACCENT_COLORS else "black"
 
@@ -115,8 +111,8 @@ def render(
 
     day_font = vendored_font(bold=True, size=_FONT_DAY_NAME)
     date_font = vendored_font(size=_FONT_DATE)
-    label_font = vendored_font(size=_FONT_LABEL)
-    summary_font = vendored_font(size=_FONT_SUMMARY)
+    label_font = vendored_font(bold=True, size=_FONT_LABEL)
+    summary_font = vendored_font(bold=True, size=_FONT_SUMMARY)
     key_font = vendored_font(size=_FONT_KEY)
 
     day_name = when.strftime("%A")
@@ -128,7 +124,7 @@ def render(
     draw_text(image, (MARGIN, date_y), date_line, fill="black", font=date_font)
     date_h = text_size(date_line, font=date_font)[1]
 
-    todays = [e for e in events if _on_day(e, when)]
+    todays = [e for e in events if e.occurs_on(when)]
     groups = sorted(_dedupe(todays), key=lambda g: (not g.all_day, g.start))
 
     _draw_calendar_key(
