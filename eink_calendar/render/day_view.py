@@ -111,8 +111,8 @@ def render(
 
     day_font = vendored_font(bold=True, size=_FONT_DAY_NAME)
     date_font = vendored_font(size=_FONT_DATE)
-    label_font = vendored_font(size=_FONT_LABEL)
-    summary_font = vendored_font(size=_FONT_SUMMARY)
+    label_font = vendored_font(bold=True, size=_FONT_LABEL)
+    summary_font = vendored_font(bold=True, size=_FONT_SUMMARY)
     key_font = vendored_font(size=_FONT_KEY)
 
     day_name = when.strftime("%A")
