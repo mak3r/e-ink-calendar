@@ -7,6 +7,13 @@ to a calendar name. Cards occupy the left three-quarters of the panel — the
 right quarter is reserved for a future widget. See
 ``.claude/plans/day-view-card-redesign.md`` (persona/product-designer branch)
 for the approved design this implements.
+
+Card sizing scales with how many cards actually render — a light day gets
+larger, more spread-out cards instead of leaving dead space below a handful
+of small ones — per ``.claude/plans/day-view-light-day-scaling.md``. The
+overflow row (when the ``max_entries`` cap trims the list) always renders at
+the fixed "compact" tier and disables the space-around distribution, so the
+busy-day worst case stays pixel-identical to the original fixed sizing.
 """
 
 from __future__ import annotations
@@ -31,14 +38,9 @@ __all__ = ["render"]
 
 _FONT_DAY_NAME = 42
 _FONT_DATE = 17
-_FONT_LABEL = 14
-_FONT_SUMMARY = 15
 _FONT_KEY = 14
 
 # Day name -> date line, date line -> rule (tight), rule -> first card (roomy).
-# Tuned so 8 cards + an overflow row (the worst case at the max_entries=9
-# default) fit inside the 800x480 panel with room to spare — see the sizing
-# check in tests/render/test_day_view.py.
 _DATE_TOP_GAP = 2
 _RULE_GAP_ABOVE = 2
 _RULE_GAP_BELOW = 8
@@ -46,13 +48,50 @@ _RULE_GAP_BELOW = 8
 _KEY_GAP = 16  # between calendar-key legend entries
 
 _COLUMN_FRACTION = 0.75  # event column occupies the left 3/4 of the panel
-_CARD_GAP = 5
-_CARD_PAD = 5
-_CORNER_RADIUS = 6
-_BORDER_W = 2
-_STRIPE_W = 10
+_BORDER_W = 2  # constant across every tier
 _STRIPE_INSET = 2  # keeps the stripe clear of the rounded corners
 _SWATCH = 12  # calendar-key legend swatch
+
+
+@dataclass(frozen=True)
+class _Tier:
+    """Card-sizing constants for one density tier.
+
+    ``compact`` reuses the original day-view-card-redesign (#127) numbers
+    exactly, so a render that ends up in the compact tier with no overflow
+    trimming looks the same as before this feature existed.
+    """
+
+    name: str
+    font_label: int
+    font_summary: int
+    card_pad: int
+    stripe_w: int
+    corner_radius: int
+    card_gap: int
+
+
+_TIER_COMPACT = _Tier("compact", font_label=14, font_summary=15, card_pad=5, stripe_w=10, corner_radius=6, card_gap=5)
+_TIER_COMFORTABLE = _Tier("comfortable", font_label=18, font_summary=20, card_pad=7, stripe_w=13, corner_radius=8, card_gap=7)
+_TIER_SPACIOUS = _Tier("spacious", font_label=22, font_summary=24, card_pad=8, stripe_w=16, corner_radius=10, card_gap=8)
+
+# Most spacious first, so _tier_down() always steps toward compact.
+_TIERS = (_TIER_SPACIOUS, _TIER_COMFORTABLE, _TIER_COMPACT)
+
+
+def _tier_for(visible_count: int) -> _Tier:
+    """Density tier for a card count already limited by ``max_entries``."""
+    if visible_count <= 3:
+        return _TIER_SPACIOUS
+    if visible_count <= 6:
+        return _TIER_COMFORTABLE
+    return _TIER_COMPACT
+
+
+def _tier_down(tier: _Tier) -> _Tier:
+    """One step more compact than ``tier`` (a no-op already at compact)."""
+    index = _TIERS.index(tier)
+    return _TIERS[min(index + 1, len(_TIERS) - 1)]
 
 
 @dataclass
@@ -111,8 +150,6 @@ def render(
 
     day_font = vendored_font(bold=True, size=_FONT_DAY_NAME)
     date_font = vendored_font(size=_FONT_DATE)
-    label_font = vendored_font(bold=True, size=_FONT_LABEL)
-    summary_font = vendored_font(bold=True, size=_FONT_SUMMARY)
     key_font = vendored_font(size=_FONT_KEY)
 
     day_name = when.strftime("%A")
@@ -141,28 +178,105 @@ def render(
     else:
         visible, overflow = groups, []
 
-    y = rule_y + _RULE_GAP_BELOW
-    for i, group in enumerate(visible):
-        wrapped, card_h, layout = _layout_card(group, label_font, summary_font, column_right)
-        if y + card_h > height - MARGIN:
-            # Doesn't fit (e.g. an unusually long, multi-line-wrapped summary
-            # ate more vertical budget than the max_entries sizing assumed) —
-            # fold it and everything after it into the overflow row rather
-            # than silently dropping it off the bottom of the panel.
-            overflow = visible[i:] + overflow
-            break
-        _draw_card(
-            image, draw, y, column_right, group, wrapped, card_h, layout, label_font, summary_font
-        )
-        y += card_h + _CARD_GAP
+    start_y = rule_y + _RULE_GAP_BELOW
+
+    if not visible:
+        _draw_no_events(image, column_right, start_y, height)
+        return image
 
     if overflow:
-        _draw_overflow_row(image, draw, y, column_right, overflow, label_font)
+        # A busy day: the max_entries cap already trimmed the list, so this
+        # is definitionally not a "light day" — render at the fixed compact
+        # tier with the original top-anchored stacking (no space-around),
+        # which keeps this worst case pixel-identical to the pre-#151 render.
+        label_font = vendored_font(bold=True, size=_TIER_COMPACT.font_label)
+        summary_font = vendored_font(bold=True, size=_TIER_COMPACT.font_summary)
+        y, overflow = _draw_stacked(
+            image, draw, visible, _TIER_COMPACT, label_font, summary_font, column_right,
+            start_y, height, overflow,
+        )
+        _draw_overflow_row(image, draw, y, column_right, overflow, label_font, _TIER_COMPACT)
+        return image
 
-    if not groups:
-        draw_text(image, (MARGIN, y), "No events", fill="black", font=summary_font)
+    # A light-to-medium day: pick a density tier and spread the cards with
+    # equal slack before, between, and after them ("space-around").
+    available_h = (height - MARGIN) - start_y
+    tier = _tier_for(len(visible))
+    while True:
+        label_font = vendored_font(bold=True, size=tier.font_label)
+        summary_font = vendored_font(bold=True, size=tier.font_summary)
+        block_h = sum(
+            _layout_card(g, label_font, summary_font, column_right, tier)[1] for g in visible
+        ) + tier.card_gap * (len(visible) - 1)
+        leftover = available_h - block_h
+        if leftover >= 0 or tier is _TIER_COMPACT:
+            break
+        tier = _tier_down(tier)
+
+    if leftover < 0:
+        # Safety net: even the compact tier doesn't fit (e.g. pathological
+        # wrapping) — fall back to the same fold-into-overflow mechanism the
+        # busy-day branch uses, rather than drawing off-panel.
+        y, safety_overflow = _draw_stacked(
+            image, draw, visible, tier, label_font, summary_font, column_right,
+            start_y, height, [],
+        )
+        if safety_overflow:
+            _draw_overflow_row(image, draw, y, column_right, safety_overflow, label_font, tier)
+        return image
+
+    slot = leftover / (len(visible) + 1)
+    y_f = float(start_y) + slot
+    for group in visible:
+        wrapped, card_h, layout = _layout_card(group, label_font, summary_font, column_right, tier)
+        _draw_card(
+            image, draw, round(y_f), column_right, group, wrapped, card_h, layout,
+            label_font, summary_font, tier,
+        )
+        y_f += card_h + tier.card_gap + slot
 
     return image
+
+
+def _draw_no_events(image: Image.Image, column_right: int, start_y: int, height: int) -> None:
+    """Zero events today: "No events", at the spacious tier's size, centered
+    (both axes) in the event column instead of left-anchored under the rule."""
+    font = vendored_font(bold=True, size=_TIER_SPACIOUS.font_summary)
+    text = "No events"
+    tw, th = text_size(text, font=font)
+    cx = (MARGIN + column_right) // 2
+    cy = (start_y + (height - MARGIN)) // 2
+    draw_text(image, (cx - tw // 2, cy - th // 2), text, fill="black", font=font)
+
+
+def _draw_stacked(
+    image: Image.Image,
+    draw: ImageDraw.ImageDraw,
+    visible: list[_Group],
+    tier: _Tier,
+    label_font,
+    summary_font,
+    column_right: int,
+    start_y: int,
+    height: int,
+    overflow: list[_Group],
+) -> tuple[int, list[_Group]]:
+    """Top-anchored, fixed-gap card stacking — today's original algorithm.
+
+    Used for a busy day (overflow already present) and as the last-resort
+    safety net when even the compact tier's space-around block doesn't fit.
+    Returns the y position after the last drawn card and the (possibly
+    extended) overflow list.
+    """
+    y = start_y
+    for i, group in enumerate(visible):
+        wrapped, card_h, layout = _layout_card(group, label_font, summary_font, column_right, tier)
+        if y + card_h > height - MARGIN:
+            overflow = visible[i:] + overflow
+            break
+        _draw_card(image, draw, y, column_right, group, wrapped, card_h, layout, label_font, summary_font, tier)
+        y += card_h + tier.card_gap
+    return y, overflow
 
 
 def _draw_calendar_key(
@@ -223,25 +337,25 @@ class _CardLayout:
 
 
 def _layout_card(
-    group: _Group, label_font, summary_font, column_right: int
+    group: _Group, label_font, summary_font, column_right: int, tier: _Tier
 ) -> tuple[list[str], int, _CardLayout]:
     """Compute a card's wrapped summary, total height, and x-positions
     without drawing anything, so callers can check it fits before drawing."""
     label_w = max(
         text_size("ALL DAY", font=label_font)[0],
         text_size("00:00", font=label_font)[0],
-    ) + _CARD_PAD
+    ) + tier.card_pad
 
     stripe_x0 = MARGIN + _BORDER_W + _STRIPE_INSET
-    stripe_x1 = stripe_x0 + _STRIPE_W
-    text_x = stripe_x1 + _CARD_PAD
+    stripe_x1 = stripe_x0 + tier.stripe_w
+    text_x = stripe_x1 + tier.card_pad
     summary_x = text_x + label_w
-    summary_max_w = max(column_right - _BORDER_W - _CARD_PAD - summary_x, 1)
+    summary_max_w = max(column_right - _BORDER_W - tier.card_pad - summary_x, 1)
 
     summary_line_h = line_height(summary_font)
     wrapped = wrap_text(group.summary, summary_max_w, font=summary_font) or [""]
-    inner_h = max(summary_line_h * len(wrapped), line_height(label_font), _STRIPE_W)
-    card_h = 2 * _CARD_PAD + inner_h
+    inner_h = max(summary_line_h * len(wrapped), line_height(label_font), tier.stripe_w)
+    card_h = 2 * tier.card_pad + inner_h
 
     return wrapped, card_h, _CardLayout(stripe_x0, stripe_x1, text_x, summary_x)
 
@@ -257,10 +371,11 @@ def _draw_card(
     layout: _CardLayout,
     label_font,
     summary_font,
+    tier: _Tier,
 ) -> None:
     """Draw one rounded-rectangle event card at ``y`` per a prior :func:`_layout_card`."""
     box = (MARGIN, y, column_right, y + card_h)
-    draw.rounded_rectangle(box, radius=_CORNER_RADIUS, outline=color("black"), width=_BORDER_W)
+    draw.rounded_rectangle(box, radius=tier.corner_radius, outline=color("black"), width=_BORDER_W)
     _draw_stripe(
         draw,
         (
@@ -272,7 +387,7 @@ def _draw_card(
         group.colors,
     )
 
-    content_top = y + _CARD_PAD
+    content_top = y + tier.card_pad
     when_label = "ALL DAY" if group.all_day else group.start.strftime("%H:%M")
     draw_text(image, (layout.text_x, content_top), when_label, fill="black", font=label_font)
     summary_line_h = line_height(summary_font)
@@ -293,17 +408,19 @@ def _draw_overflow_row(
     column_right: int,
     hidden: list[_Group],
     label_font,
+    tier: _Tier,
 ) -> None:
     """A segmented color band (one segment per distinct hidden color) plus a
-    "+N more" count, glanceable in place of N plain-text rows."""
+    "+N more" count, glanceable in place of N plain-text rows. Always drawn
+    at the compact tier — see the module docstring."""
     colors_seen: list[str] = []
     for g in hidden:
         for c in g.colors:
             if c not in colors_seen:
                 colors_seen.append(c)
 
-    band_h = line_height(label_font) + _CARD_PAD
-    band_w = min(120, column_right - MARGIN - 2 * _CARD_PAD)
+    band_h = line_height(label_font) + tier.card_pad
+    band_w = min(120, column_right - MARGIN - 2 * tier.card_pad)
     x0, y0, x1, y1 = MARGIN, y, MARGIN + band_w, y + band_h
     draw.rectangle([(x0, y0), (x1, y1)], outline=color("black"), width=_BORDER_W)
 
@@ -317,4 +434,4 @@ def _draw_overflow_row(
 
     label = f"+{len(hidden)} more"
     text_y = y0 + (band_h - line_height(label_font)) // 2
-    draw_text(image, (x1 + _CARD_PAD, text_y), label, fill="black", font=label_font)
+    draw_text(image, (x1 + tier.card_pad, text_y), label, fill="black", font=label_font)
