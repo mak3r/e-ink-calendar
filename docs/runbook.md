@@ -394,17 +394,17 @@ the first v0.2.0 bring-up (Raspberry Pi OS Trixie, Inky Impression 7.3").**
 
 | Check | How | Result |
 |---|---|---|
-| `/dev/spidev0.0` and `/dev/i2c-1` both present | `ls -l /dev/spidev0.0 /dev/i2c-1` | _fill in_ |
-| Panel EEPROM visible on I2C | `i2cdetect -y 1` shows a device at `0x50` | _fill in_ |
+| `/dev/spidev0.0` and `/dev/i2c-1` both present | `ls -l /dev/spidev0.0 /dev/i2c-1` | crw-rw---- 1 root i2c  89, 1 Sep 10 17:50 /dev/i2c-1 <br> crw-rw---- 1 root spi 153, 0 Sep 10 17:50 /dev/spidev0.0 |
+| Panel EEPROM visible on I2C | `i2cdetect -y 1` shows a device at `0x50` | yes |
 | App starts clean **as the service user** | `sudo -u eink-calendar -H bash -c '~/app/.venv/bin/python -m eink_calendar.app'` (exercises SPI CS + I2C + lgpio inside the systemd sandbox constraints) | yes (panel detected, buttons OK — see below) |
 | Panel detected | `sudo -u eink-calendar -H bash -c '~/app/.venv/bin/python -c "from inky.auto import auto; print(auto().resolution)"'` | `(800, 480)` |
 | `display.resolution` in config matches the line above | edit `config.yaml` | yes |
-| Panel actually refreshes with the composited image | watch after `systemctl start` | **no** — tracked in #100 |
+| Panel actually refreshes with the composited image | watch after `systemctl start` | yes |
 | Button pin map matches [Pimoroni's current pinout](https://learn.pimoroni.com/) | compare to `buttons.pin_map` | yes — see `gpioinfo` below |
 | Button A cycles Day → Week → Month | press it | yes |
 | Button B forces a refresh | press it, watch the journal | yes |
 | Buttons C and D do nothing (no crash, no log) | press them | yes |
-| Daily auto-refresh fires at `daily_time` | set a near-future time, wait | _fill in_ |
+| Daily auto-refresh fires at `daily_time` | set a near-future time, wait | yes|
 | Service restarts after `sudo reboot` with no prompt | reboot | yes |
 
 `gpioinfo` from the bring-up Pi confirms the pin map — `inky` holds GPIO8/22/27
