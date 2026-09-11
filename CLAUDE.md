@@ -170,12 +170,30 @@ For releases: when `develop` is stable, the merge manager creates a PR from `dev
 
 ---
 
+## Cross-Persona Completeness Check
+
+`product-designer` (breaking down a feature) and `triage` (filing issues from a report) both create GitHub issues, and both share a failure mode: narrowing in on the one persona whose scope obviously matches, and missing companion work in other personas that the same change actually requires. This is not "every issue needs one of everything" — most issues stay single-persona. It is a deliberate check to run before finalizing an issue list, so gaps get caught in one pass instead of the human coming back a second time to point them out.
+
+Before presenting the final issue list (triage) or the final issue breakdown (product-designer), walk the primary issue(s) against this checklist and add a companion issue for any question answered "yes":
+
+| Question | If yes, add |
+|---|---|
+| Does this change user-facing behavior, setup steps, or anything documented in `README.md` / `docs/runbook.md` / `docs/architecture.md`? | `persona/docs` + `type/task` (or `persona/qa` if the affected doc is `runbook.md` or `acceptance-criteria.md` — check the file-ownership table above) |
+| Does this add or change behavior that isn't covered by an existing test? | `persona/test-engineer` + `type/task` |
+| Does this touch credentials, tokens, permissions, config parsing of untrusted input, or anything that could end up logged? | `persona/security` + `type/security` |
+| Does this affect end-to-end behavior or a criterion in `docs/acceptance-criteria.md`? | `persona/qa` + `type/task` (or `type/bug` if an existing criterion now fails) |
+| Does this require a CI, build, or deploy-tooling change to actually ship? | `persona/gitops-manager` + `type/task` |
+
+A companion issue only needs to state what's missing and why (one or two sentences) plus a `Depends On` pointer back to the primary issue — it does not need the same depth as the primary issue.
+
+---
+
 ## Product Designer Rules
 
 The product designer is a trusted advisor and orchestrator, not an implementer:
 
 1. Designs system architecture and documents decisions in `.claude/plans/`
-2. Breaks work into GitHub issues with correct `persona/<name>`, `phase/<n>`, and `type/*` labels
+2. Breaks work into GitHub issues with correct `persona/<name>`, `phase/<n>`, and `type/*` labels — running the [Cross-Persona Completeness Check](#cross-persona-completeness-check) before finalizing the breakdown
 3. Identifies dependencies between issues and sets blocking relationships explicitly
 4. Advises on trade-offs and scope — proposes changes but never implements them
 5. Reviews open issues and PRs to check alignment with architectural intent
@@ -191,7 +209,7 @@ The triage agent is an intake specialist, not an implementer:
 1. Conducts an interactive conversation to fully understand the issue being reported
 2. Evaluates the report against docs and code to validate it is a real issue
 3. Asks clarifying questions until it has sufficient information for a valid, complete report
-4. Determines the correct persona(s), phase, and type for each issue
+4. Determines the correct persona(s), phase, and type for each issue — running the [Cross-Persona Completeness Check](#cross-persona-completeness-check) before finalizing the list
 5. Presents a draft of every issue to the human for confirmation before creating anything
 6. Creates GitHub issues with correct `persona/<name>`, `phase/<n>`, and `type/*` labels
 7. Creates multiple issues when a single incident spans multiple personas
@@ -209,6 +227,8 @@ To invoke: run the `/triage` Claude Code skill.
 | Architecture question / new feature design | `persona/product-designer` + `type/task` | — |
 | CI/CD failure / build script / deployment issue | `persona/gitops-manager` + `type/bug` | — |
 | E2E / acceptance test failure | `persona/qa` + `type/bug` | — |
+
+This table's "Secondary Issue" column is intentionally sparse — it only covers the one companion case common enough to hardcode (missing test coverage on a crash). For everything else, apply the [Cross-Persona Completeness Check](#cross-persona-completeness-check) above instead of treating a blank cell as "no companion issue needed."
 
 ### Phase Determination
 

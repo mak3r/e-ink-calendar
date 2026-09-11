@@ -70,7 +70,9 @@ Apply the Triage Routing Table from CLAUDE.md:
 
 **Determine phase** using the Phase Determination table in CLAUDE.md. If the human cannot identify the file area, search the source code for relevant symbols or error strings to determine the affected file and phase — do not ask the human which file is involved.
 
-Build a list of `(persona, phase, type)` tuples — one per issue.
+Build a list of `(persona, phase, type)` tuples for the primary issue(s).
+
+**Then run the Cross-Persona Completeness Check** (CLAUDE.md) against that list before moving on: walk each question in the checklist table and add a companion `(persona, phase, type)` tuple for every "yes." Do this even when the primary report looks fully contained within one persona's scope — that's exactly the case this check exists to catch. Skip a companion only when the checklist question is genuinely inapplicable (e.g. a pure CI-config fix has nothing for `persona/qa` to do), not because the human didn't mention it.
 
 ---
 
