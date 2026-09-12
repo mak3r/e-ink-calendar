@@ -80,28 +80,42 @@ def rendered():
     return day_view.render(_events(), datetime(2026, 9, 9, tzinfo=timezone.utc).date(), RESOLUTION)
 
 
-def test_divider_rule_spans_the_width(rendered):
+def _widget_left(width):
+    """Where the widget column begins — the rule stops here instead of
+    crossing the full panel width, per day-view-widget-column.md §2."""
+    column_right = MARGIN + round((width - 2 * MARGIN) * day_view._COLUMN_FRACTION)
+    return column_right + day_view._WIDGET_GAP
+
+
+def _find_divider_y(rendered):
     width = rendered.width
-    span = width - 2 * MARGIN
-    divider_ys = [
+    widget_left = _widget_left(width)
+    span = widget_left - MARGIN
+    return next(
         y
         for y in range(150)
-        if len([x for x in _black_columns(rendered, y) if MARGIN <= x <= width - MARGIN])
+        if len([x for x in _black_columns(rendered, y) if MARGIN <= x < widget_left])
         >= span * 0.9
-    ]
-    assert divider_ys, "no full-width divider rule found in the header"
+    )
+
+
+def test_divider_rule_stops_at_the_widget_column(rendered):
+    width = rendered.width
+    widget_left = _widget_left(width)
+    divider_y = _find_divider_y(rendered)
+
+    # It reaches the widget column's left edge but does not cross into it or
+    # continue on to the panel's right margin (no weather is configured for
+    # this fixture, so the widget column itself is blank — any ink out there
+    # would have to be the rule wrongly continuing).
+    beyond = [x for x in _black_columns(rendered, divider_y) if x >= widget_left + 2]
+    assert not beyond, f"rule crosses into the widget column instead of stopping at it: {beyond}"
 
 
 def test_header_bands_do_not_overlap(rendered):
     width = rendered.width
-    span = width - 2 * MARGIN
 
-    divider_y = next(
-        y
-        for y in range(150)
-        if len([x for x in _black_columns(rendered, y) if MARGIN <= x <= width - MARGIN])
-        >= span * 0.9
-    )
+    divider_y = _find_divider_y(rendered)
 
     # Ink bands strictly above the divider, in the left half (title + date line).
     header_rows = [

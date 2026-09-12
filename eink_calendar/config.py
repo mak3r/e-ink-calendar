@@ -35,6 +35,7 @@ __all__ = [
     "DisplayConfig",
     "RefreshConfig",
     "ViewConfig",
+    "WeatherConfig",
     "load_config",
 ]
 
@@ -55,6 +56,8 @@ _VALID_WEEK_START: frozenset[str] = frozenset({"monday", "sunday"})
 _VALID_BINDINGS: frozenset[str] = frozenset({"cycle_view", "force_refresh", "noop"})
 _DAY_MAX_ENTRIES_RANGE: tuple[int, int] = (5, 9)
 _DAY_MAX_ENTRIES_DEFAULT = 9
+_LAT_RANGE: tuple[float, float] = (-90.0, 90.0)
+_LON_RANGE: tuple[float, float] = (-180.0, 180.0)
 
 _DAILY_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
@@ -114,6 +117,12 @@ class CacheConfig:
 
 
 @dataclass(frozen=True)
+class WeatherConfig:
+    lat: float
+    lon: float
+
+
+@dataclass(frozen=True)
 class AppConfig:
     display: DisplayConfig
     refresh: RefreshConfig
@@ -121,6 +130,7 @@ class AppConfig:
     buttons: ButtonConfig
     accounts: list[AccountConfig]
     cache: CacheConfig
+    weather: WeatherConfig | None = None
     source_path: Path = field(default=Path("<unknown>"))
 
 
@@ -173,6 +183,7 @@ def _build_app_config(data: dict[str, Any], source: Path) -> AppConfig:
         buttons=_build_buttons(_section(data, "buttons", source)),
         accounts=_build_accounts(data.get("accounts")),
         cache=_build_cache(_section(data, "cache", source)),
+        weather=_build_weather(data.get("weather")),
         source_path=source,
     )
 
@@ -370,3 +381,37 @@ def _build_calendars(calendars_raw: Any, account_index: int) -> list[CalendarSpe
 def _build_cache(section: dict[str, Any]) -> CacheConfig:
     path = _require(section, "path", "cache")
     return CacheConfig(path=Path(str(path)).expanduser())
+
+
+def _build_weather(section_raw: Any) -> WeatherConfig | None:
+    """``weather:`` is optional — a household that hasn't set a location
+    just gets no dawn/dusk/moon/weather widgets (the render side degrades
+    the same way it already does for a first-run/failed weather fetch).
+    When present, its fields are validated the same strict way as every
+    other section's.
+    """
+    if section_raw is None:
+        return None
+    if not isinstance(section_raw, dict):
+        raise ConfigError("config section 'weather' must be a mapping")
+
+    location = _require(section_raw, "location", "weather")
+    if not isinstance(location, dict):
+        raise ConfigError(
+            f"weather.location must be a mapping with 'lat' and 'lon', got {location!r}"
+        )
+    lat = _require(location, "lat", "weather.location")
+    lon = _require(location, "lon", "weather.location")
+
+    lat_lo, lat_hi = _LAT_RANGE
+    if not isinstance(lat, (int, float)) or isinstance(lat, bool) or not (lat_lo <= lat <= lat_hi):
+        raise ConfigError(
+            f"weather.location.lat must be a number between {lat_lo} and {lat_hi}, got {lat!r}"
+        )
+    lon_lo, lon_hi = _LON_RANGE
+    if not isinstance(lon, (int, float)) or isinstance(lon, bool) or not (lon_lo <= lon <= lon_hi):
+        raise ConfigError(
+            f"weather.location.lon must be a number between {lon_lo} and {lon_hi}, got {lon!r}"
+        )
+
+    return WeatherConfig(lat=float(lat), lon=float(lon))
