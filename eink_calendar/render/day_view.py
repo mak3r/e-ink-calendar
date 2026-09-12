@@ -9,11 +9,18 @@ right quarter is reserved for a future widget. See
 for the approved design this implements.
 
 Card sizing scales with how many cards actually render — a light day gets
-larger, more spread-out cards instead of leaving dead space below a handful
-of small ones — per ``.claude/plans/day-view-light-day-scaling.md``. The
-overflow row (when the ``max_entries`` cap trims the list) always renders at
-the fixed "compact" tier and disables the space-around distribution, so the
-busy-day worst case stays pixel-identical to the original fixed sizing.
+larger cards instead of small ones with dead space below them — per
+``.claude/plans/day-view-density-stacking-fix.md`` (which supersedes the
+"space-around" distribution and hardcoded-busy-tier approach originally
+proposed in ``day-view-light-day-scaling.md``). Cards always stack top-down,
+immediately under the rule, with only the selected tier's fixed gap between
+them; any leftover column space stays blank below the last card (or the
+overflow row) rather than being distributed. The tier is picked from how
+many cards actually render, uniformly, whether or not the ``max_entries``
+cap trimmed anything — so a lower cap's own worst case renders at a larger
+tier, while the ``max_entries=9`` worst case (8-9 visible) still lands on the
+same fixed "compact" tier as the original #127 design and stays
+pixel-identical to it.
 """
 
 from __future__ import annotations
@@ -184,22 +191,11 @@ def render(
         _draw_no_events(image, column_right, start_y, height)
         return image
 
-    if overflow:
-        # A busy day: the max_entries cap already trimmed the list, so this
-        # is definitionally not a "light day" — render at the fixed compact
-        # tier with the original top-anchored stacking (no space-around),
-        # which keeps this worst case pixel-identical to the pre-#151 render.
-        label_font = vendored_font(bold=True, size=_TIER_COMPACT.font_label)
-        summary_font = vendored_font(bold=True, size=_TIER_COMPACT.font_summary)
-        y, overflow = _draw_stacked(
-            image, draw, visible, _TIER_COMPACT, label_font, summary_font, column_right,
-            start_y, height, overflow,
-        )
-        _draw_overflow_row(image, draw, y, column_right, overflow, label_font, _TIER_COMPACT)
-        return image
-
-    # A light-to-medium day: pick a density tier and spread the cards with
-    # equal slack before, between, and after them ("space-around").
+    # Pick a density tier for however many cards actually render — uniformly,
+    # whether or not max_entries trimmed anything (a lower cap's own worst
+    # case then naturally lands on a bigger tier). Step down a tier if the
+    # whole block doesn't fit; _draw_stacked's own per-card check is the
+    # final fallback if even the compact tier doesn't fit.
     available_h = (height - MARGIN) - start_y
     tier = _tier_for(len(visible))
     while True:
@@ -208,32 +204,15 @@ def render(
         block_h = sum(
             _layout_card(g, label_font, summary_font, column_right, tier)[1] for g in visible
         ) + tier.card_gap * (len(visible) - 1)
-        leftover = available_h - block_h
-        if leftover >= 0 or tier is _TIER_COMPACT:
+        if block_h <= available_h or tier is _TIER_COMPACT:
             break
         tier = _tier_down(tier)
 
-    if leftover < 0:
-        # Safety net: even the compact tier doesn't fit (e.g. pathological
-        # wrapping) — fall back to the same fold-into-overflow mechanism the
-        # busy-day branch uses, rather than drawing off-panel.
-        y, safety_overflow = _draw_stacked(
-            image, draw, visible, tier, label_font, summary_font, column_right,
-            start_y, height, [],
-        )
-        if safety_overflow:
-            _draw_overflow_row(image, draw, y, column_right, safety_overflow, label_font, tier)
-        return image
-
-    slot = leftover / (len(visible) + 1)
-    y_f = float(start_y) + slot
-    for group in visible:
-        wrapped, card_h, layout = _layout_card(group, label_font, summary_font, column_right, tier)
-        _draw_card(
-            image, draw, round(y_f), column_right, group, wrapped, card_h, layout,
-            label_font, summary_font, tier,
-        )
-        y_f += card_h + tier.card_gap + slot
+    y, overflow = _draw_stacked(
+        image, draw, visible, tier, label_font, summary_font, column_right, start_y, height, overflow,
+    )
+    if overflow:
+        _draw_overflow_row(image, draw, y, column_right, overflow, label_font, tier)
 
     return image
 
@@ -261,12 +240,12 @@ def _draw_stacked(
     height: int,
     overflow: list[_Group],
 ) -> tuple[int, list[_Group]]:
-    """Top-anchored, fixed-gap card stacking — today's original algorithm.
-
-    Used for a busy day (overflow already present) and as the last-resort
-    safety net when even the compact tier's space-around block doesn't fit.
-    Returns the y position after the last drawn card and the (possibly
-    extended) overflow list.
+    """Draw ``visible`` top-down at ``tier``: first card under the rule, each
+    next one offset by the previous card's height plus ``tier.card_gap`` —
+    the only card-drawing loop; no distributed leftover space, ever. Folds
+    any card that doesn't fit (and everything after it) into ``overflow``
+    instead of drawing off-panel. Returns the y position after the last
+    drawn card and the (possibly extended) overflow list.
     """
     y = start_y
     for i, group in enumerate(visible):
@@ -411,8 +390,8 @@ def _draw_overflow_row(
     tier: _Tier,
 ) -> None:
     """A segmented color band (one segment per distinct hidden color) plus a
-    "+N more" count, glanceable in place of N plain-text rows. Always drawn
-    at the compact tier — see the module docstring."""
+    "+N more" count, glanceable in place of N plain-text rows. Drawn at
+    ``tier`` — the same tier the visible cards above it used."""
     colors_seen: list[str] = []
     for g in hidden:
         for c in g.colors:
