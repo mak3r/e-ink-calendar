@@ -32,6 +32,13 @@ from eink_calendar.config import AppConfig, load_config
 from eink_calendar.display.factory import create_display
 from eink_calendar.render.renderer import render
 from eink_calendar.view_state import ViewMode, cycle
+from eink_calendar.weather_source.cache import (
+    CachedWeather,
+    load_weather_cache,
+    save_weather_cache,
+)
+from eink_calendar.weather_source.fetch import compute_solar_lunar, fetch_weather
+from eink_calendar.weather_source.models import WeatherReading, WeatherSnapshot
 
 __all__ = ["App", "main"]
 
@@ -49,6 +56,22 @@ class App:
             for account in config.accounts
             for calendar in account.calendars
         }
+
+        self._weather_cache_path = config.cache.path.parent / "weather_cache.json"
+        self._weather_cache = (
+            load_weather_cache(self._weather_cache_path) if config.weather else CachedWeather()
+        )
+        self._weather_snapshot: WeatherSnapshot | None = None
+        if config.weather:
+            sunrise, sunset, moon_phase = compute_solar_lunar(
+                self._today(), config.weather.lat, config.weather.lon
+            )
+            self._weather_snapshot = WeatherSnapshot(
+                weather=self._weather_cache.reading,
+                sunrise=sunrise,
+                sunset=sunset,
+                moon_phase=moon_phase,
+            )
 
         self._display = create_display(
             config.display.driver,
@@ -109,10 +132,16 @@ class App:
     # -- core ------------------------------------------------------------
 
     def refresh_and_render(self) -> None:
-        """Fetch every calendar; on success replace the cache and re-render.
+        """Fetch every calendar and refresh weather; on calendar-fetch
+        success replace the cache and re-render.
 
-        On any failure the cache and the on-screen render are left as they were.
+        Weather refreshes on this same cadence as an independent,
+        always-attempted step: a weather failure or a calendar failure never
+        blocks or blanks the other, matching the "a failed fetch must never
+        blank the panel" rule for each data source individually.
         """
+        self._refresh_weather()
+
         try:
             events = self._fetch_all()
         except Exception:  # a bad fetch must never blank the panel
@@ -125,6 +154,36 @@ class App:
             self._cache = fresh
         log.info("refreshed %d events", len(events))
         self._render_current()
+
+    def _refresh_weather(self) -> None:
+        """Fetch a fresh weather reading; on failure fall back to the last
+        cached one. Solar/lunar is recomputed fresh every call regardless —
+        it's local and deterministic, so it never needs the cache and can
+        never be the reason a refresh fails.
+        """
+        weather_config = self._config.weather
+        if weather_config is None:
+            return
+
+        reading: WeatherReading | None
+        try:
+            reading = fetch_weather(weather_config.lat, weather_config.lon)
+        except Exception:  # a bad weather fetch must never blank the widget
+            log.warning("weather refresh failed; keeping last good reading", exc_info=True)
+            reading = self._weather_cache.reading
+        else:
+            self._weather_cache = CachedWeather(
+                fetched_at=datetime.now(tz=self._tz), reading=reading
+            )
+            save_weather_cache(self._weather_cache_path, self._weather_cache)
+
+        sunrise, sunset, moon_phase = compute_solar_lunar(
+            self._today(), weather_config.lat, weather_config.lon
+        )
+        with self._lock:
+            self._weather_snapshot = WeatherSnapshot(
+                weather=reading, sunrise=sunrise, sunset=sunset, moon_phase=moon_phase
+            )
 
     def _fetch_all(self) -> list[Event]:
         today = self._today()
