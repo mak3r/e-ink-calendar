@@ -26,6 +26,13 @@ from eink_calendar.calendar_source.models import Event
 from eink_calendar.config import AppConfig, ConfigError, load_config
 from eink_calendar.display.factory import create_display
 from eink_calendar.render.renderer import render
+from eink_calendar.weather_source.cache import (
+    CachedWeather,
+    load_weather_cache,
+    save_weather_cache,
+)
+from eink_calendar.weather_source.fetch import compute_solar_lunar, fetch_weather
+from eink_calendar.weather_source.models import WeatherSnapshot
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -75,6 +82,7 @@ def main(argv: list[str] | None = None) -> int:
         for account in config.accounts
         for calendar in account.calendars
     }
+    weather_snapshot = _weather_snapshot(config, today, tz, use_cache=args.use_cache)
     image = render(
         view,
         contents.events,
@@ -83,6 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         week_starts_on=config.view.week_starts_on,
         calendar_labels=calendar_labels,
         day_max_entries=config.view.day_max_entries,
+        weather=weather_snapshot,
     )
 
     archive_path = config.display.output_path
@@ -118,6 +127,35 @@ def _fetch(config: AppConfig, today: date) -> list[Event]:
                 )
             )
     return events
+
+
+def _weather_snapshot(
+    config: AppConfig, today: date, tz: ZoneInfo, *, use_cache: bool
+) -> WeatherSnapshot | None:
+    """Mirrors ``App._refresh_weather()``: no ``weather:`` config -> ``None``;
+    ``--use-cache`` skips the network fetch (same "no network call" promise
+    as the calendar side) and uses whatever's already cached.
+    """
+    if config.weather is None:
+        return None
+
+    weather_cache_path = config.cache.path.parent / "weather_cache.json"
+    weather_cache = load_weather_cache(weather_cache_path)
+    if not use_cache:
+        try:
+            reading = fetch_weather(config.weather.lat, config.weather.lon)
+            weather_cache = CachedWeather(fetched_at=datetime.now(tz=tz), reading=reading)
+            save_weather_cache(weather_cache_path, weather_cache)
+        except Exception:  # noqa: BLE001 -- a bad weather fetch must never blank the widget
+            print("weather fetch failed; using cached reading if any")
+
+    sunrise, sunset, moon_phase = compute_solar_lunar(today, config.weather.lat, config.weather.lon)
+    return WeatherSnapshot(
+        weather=weather_cache.reading,
+        sunrise=sunrise.astimezone(tz),
+        sunset=sunset.astimezone(tz),
+        moon_phase=moon_phase,
+    )
 
 
 if __name__ == "__main__":
