@@ -59,10 +59,19 @@ eink_calendar/
   render/
     palette.py              PALETTE dict - the single source of truth for color
     renderer.py             dispatch (view_mode, events) -> PIL.Image
-    day_view.py             day layout
+    day_view.py             day layout (event cards + widget column)
     week_view.py            week layout
     month_view.py           month grid layout
     layout_common.py        shared layout/text helpers
+    __init__.py
+
+  weather_source/
+    models.py               WeatherSnapshot: Open-Meteo reading (cached) +
+                             astral-computed sunrise/sunset/moon phase (not cached)
+    fetch.py                fetch_weather(lat, lon) - Open-Meteo GET via urllib;
+                             solar/lunar computed via astral, never fetched
+    cache.py                JSON cache of the last-fetched *weather* half only
+                            (solar/lunar is cheaper to recompute than to cache)
     __init__.py
 
   display/
@@ -107,10 +116,13 @@ which `test-engineer` owns alongside `tests/**`.
 
 `app.py` depends on `config`, `view_state`, `calendar_source.*`,
 `render.renderer`, `display.factory`, `buttons.factory` — and on **no concrete
-driver class**. `render/*` depends only on `calendar_source.models` and
-`render.palette`. `calendar_source/*` has no dependency on `render`, `display`,
-or `buttons`. `view_state` depends on nothing. This keeps the whole non-hardware
-core a pure function of (config, cached events, today's date).
+driver class**. `render/*` depends only on `calendar_source.models`,
+`render.palette`, and (since #167) `weather_source.models` — `render/day_view.py`
+draws the widget column from a `WeatherSnapshot`. `calendar_source/*` and
+`weather_source/*` have no dependency on `render`, `display`, or `buttons`, or
+on each other. `view_state` depends on nothing. This keeps the whole
+non-hardware core a pure function of (config, cached events, cached/fetched
+weather, today's date).
 
 ## Data Flow
 
@@ -192,12 +204,15 @@ accounts:                       # non-empty list; a single account is a 1-elemen
 
 cache:
   path: "data/cache.json"
+
+weather:                        # OPTIONAL - omit entirely for no widget column
+  location: {lat: 40.7128, lon: -74.0060}   # household's fixed location
 ```
 
 **Dataclasses** (`config.py`): `AppConfig` -> `DisplayConfig`, `RefreshConfig`,
 `ViewConfig`, `ButtonConfig`, `list[AccountConfig]` (each ->
-`list[CalendarSpec]`), `CacheConfig`. `AppConfig.source_path` records where the
-config was loaded from.
+`list[CalendarSpec]`), `CacheConfig`, `WeatherConfig | None`.
+`AppConfig.source_path` records where the config was loaded from.
 
 **Validation rules that matter:**
 
@@ -217,6 +232,12 @@ config was loaded from.
 - **`calendars[].color` is one of {black, white, red, green, blue, yellow}** —
   the six panel colors. `config.PALETTE_COLORS` is kept in sync with
   `render/palette.py::PALETTE` by convention (both keyed by the same names).
+- **`weather` is optional** — unlike every other top-level section, a
+  household that omits it entirely just gets no dawn/dusk/moon/weather
+  widgets (day view degrades the same way it already does for a
+  failed/first-run weather fetch). When present, `weather.location.lat` must
+  be a number between -90 and 90 and `weather.location.lon` a number between
+  -180 and 180, both required.
 - All file paths are `.expanduser()`-ed at load.
 
 ### Per-environment config (dev Mac vs Pi)
@@ -479,10 +500,31 @@ never `main` HEAD.
 ## External dependencies
 
 - **Google Calendar API** — read-only scope; one `events().list` call per
-  calendar per refresh. The only external service the runtime contacts.
+  calendar per refresh.
+- **[Open-Meteo](https://open-meteo.com/)** — the weather half of the widget
+  column (current conditions, high/low, same-day mini-forecast), via
+  `weather_source/fetch.py`. A plain HTTPS GET with `lat`/`lon`, no API key or
+  account, no signup required for the free tier
+  ([pricing/terms](https://open-meteo.com/en/pricing)). Free-tier limits are
+  600 calls/minute, 5,000/hour, 10,000/day; this device makes on the order of
+  1-10/day (one per scheduled or forced refresh), nowhere near those
+  ceilings. The terms are explicitly **non-commercial use only**, with **no
+  uptime guarantee** — both fine for a household device, but the second point
+  is why the weather widget must degrade to the last cached snapshot (or no
+  widget, on first run) on a failed fetch rather than blocking the render or
+  crashing, the same way the calendar side already handles a failed Google
+  fetch.
+- **[astral](https://pypi.org/project/astral/)** ([GitHub](https://github.com/sffjunkie/astral)) —
+  sunrise, sunset, and moon phase, computed locally and offline from
+  `(date, lat, lon)`. No network call, no API key, and — since nothing is
+  fetched — no possibility of going stale or being unavailable: this half of
+  the widget column is *more* reliable than either the weather fetch or the
+  Google Calendar integration, since there is no external service involved
+  at all. Recomputed fresh on every render; never cached.
 - **Python packages that install everywhere** (`requirements-base.txt`):
   `google-api-python-client`, `google-auth`, `google-auth-oauthlib`, `Pillow`,
-  `PyYAML`.
+  `PyYAML`, `astral`. (Open-Meteo needs no client library — `fetch.py` uses
+  stdlib `urllib.request` + `json` for its one GET call.)
 - **Pi-only packages** (`requirements-pi.txt`): `inky`, `gpiozero`, `RPi.GPIO`.
 - **Dev-only packages** (`requirements-dev.txt`): `pytest`, `ruff`, `mypy`,
   `bandit`.
