@@ -13,6 +13,7 @@ from PIL import Image
 
 from eink_calendar.calendar_source.models import Event
 from eink_calendar.render import day_view, month_view, week_view
+from eink_calendar.weather_source.models import WeatherSnapshot
 
 __all__ = ["DEFAULT_RESOLUTION", "render"]
 
@@ -28,13 +29,15 @@ def render(
     week_starts_on: str = "monday",
     calendar_labels: dict[str, str] | None = None,
     day_max_entries: int = 9,
+    weather: WeatherSnapshot | None = None,
 ) -> Image.Image:
     """Render ``events`` for ``view_mode`` (``"day"``/``"week"``/``"month"``).
 
     ``view_mode`` accepts a plain string or a ``view_state.ViewMode`` (which is a
-    ``str`` enum). ``when`` defaults to today. ``calendar_labels`` and
-    ``day_max_entries`` are day-view-only (a ``color -> label`` legend mapping
-    and the entry cap before the overflow row); ignored by week/month.
+    ``str`` enum). ``when`` defaults to today. ``calendar_labels``,
+    ``day_max_entries``, and ``weather`` are day-view-only (a ``color -> label``
+    legend mapping, the entry cap before the overflow row, and the dawn/dusk +
+    moon phase + weather widget column); ignored by week/month.
     """
     # A str-mixed Enum's str() is "ViewMode.DAY" on 3.11, so read .value first.
     mode = str(getattr(view_mode, "value", view_mode)).lower()
@@ -50,6 +53,7 @@ def render(
             resolution,
             calendar_labels=calendar_labels,
             max_entries=day_max_entries,
+            weather=weather,
         )
     if mode == "week":
         return week_view.render(ordered, day, resolution, week_starts_on)

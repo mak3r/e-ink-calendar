@@ -68,8 +68,8 @@ class App:
             )
             self._weather_snapshot = WeatherSnapshot(
                 weather=self._weather_cache.reading,
-                sunrise=sunrise,
-                sunset=sunset,
+                sunrise=sunrise.astimezone(self._tz),
+                sunset=sunset.astimezone(self._tz),
                 moon_phase=moon_phase,
             )
 
@@ -182,7 +182,10 @@ class App:
         )
         with self._lock:
             self._weather_snapshot = WeatherSnapshot(
-                weather=reading, sunrise=sunrise, sunset=sunset, moon_phase=moon_phase
+                weather=reading,
+                sunrise=sunrise.astimezone(self._tz),
+                sunset=sunset.astimezone(self._tz),
+                moon_phase=moon_phase,
             )
 
     def _fetch_all(self) -> list[Event]:
@@ -203,6 +206,7 @@ class App:
         with self._lock:
             view = self._view
             events = list(self._cache.events)
+            weather = self._weather_snapshot
         image = render(
             view,
             events,
@@ -211,6 +215,7 @@ class App:
             week_starts_on=self._config.view.week_starts_on,
             calendar_labels=self._calendar_labels,
             day_max_entries=self._config.view.day_max_entries,
+            weather=weather,
         )
         self._display.set_image(image)
         self._display.show()
