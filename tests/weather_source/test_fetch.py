@@ -113,7 +113,7 @@ def test_fetch_weather_parses_current_and_same_day_forecast():
     assert reading.low_f == 61.0
 
     labels = [point.label for point in reading.forecast]
-    assert labels == ["Now", "This Afternoon", "Tonight"]
+    assert labels == ["Morning", "This Afternoon", "Tonight"]
     afternoon = next(p for p in reading.forecast if p.label == "This Afternoon")
     assert afternoon.temp_f == 70.0 + 15
 

@@ -104,7 +104,7 @@ def _parse_response(data: dict) -> WeatherReading:
     low_f = float(daily["temperature_2m_min"][0])
 
     forecast = [
-        ForecastPoint(label="Now", temp_f=temp_f, condition=condition),
+        ForecastPoint(label="Morning", temp_f=temp_f, condition=condition),
         *_same_day_forecast(hourly),
     ]
 
