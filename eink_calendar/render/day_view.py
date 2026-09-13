@@ -35,7 +35,6 @@ from eink_calendar.calendar_source.models import Event
 from eink_calendar.render.layout_common import (
     MARGIN,
     draw_text,
-    ellipsize,
     line_height,
     text_size,
     vendored_font,
@@ -64,7 +63,8 @@ _STRIPE_INSET = 2  # keeps the stripe clear of the rounded corners
 _SWATCH = 12  # calendar-key legend swatch
 
 # Widget column (dawn/dusk, moon phase, weather) — see
-# .claude/plans/day-view-widget-column.md. Runs the full panel height,
+# .claude/plans/day-view-widget-column.md and the post-deploy fixes in
+# .claude/plans/day-view-widget-column-fixes.md. Runs the full panel height,
 # independent of the calendar column's header/rule.
 _WIDGET_GAP = 12  # calendar column's right edge -> widget column's left edge
 _WIDGET_V_GAP = 10  # between the three stacked widgets
@@ -76,9 +76,16 @@ _WIDGET_MOON_H = 76
 _FONT_WIDGET_LABEL = 13
 _FONT_WIDGET_VALUE = 18
 _FONT_WIDGET_TITLE = 15
-_FONT_TIME_VALUE = 14  # sunrise/sunset: half the (narrow) widget width each
-_FONT_FORECAST_LABEL = 10  # forecast strip: 3 columns in that same width
-_ICON_SIZE = 28
+_ICON_SIZE = 28  # dawn/dusk icon; moon phase icon
+
+# Weather widget: H/L at the top (larger than other widget labels), then
+# each forecast period as a stacked row (label line, then icon + temp).
+_FONT_HL_LABEL = 13
+_FONT_HL_VALUE = 22
+_FONT_FORECAST_LABEL = 13
+_FONT_FORECAST_TEMP = 24
+_FORECAST_ICON_SIZE = 36
+_FORECAST_ROW_GAP = 6
 
 # astral's 8 named phases -> fraction of the disk illuminated (0=new, 1=full).
 _MOON_LIT_FRACTION = {
@@ -492,7 +499,7 @@ def _draw_widget_column(
 
     y = MARGIN
     dawn_dusk_box = (widget_left, y, widget_right, y + _WIDGET_DAWN_DUSK_H)
-    _draw_dawn_dusk_widget(image, draw, dawn_dusk_box, weather, label_font)
+    _draw_dawn_dusk_widget(image, draw, dawn_dusk_box, weather, label_font, value_font)
     y += _WIDGET_DAWN_DUSK_H + _WIDGET_V_GAP
 
     moon_box = (widget_left, y, widget_right, y + _WIDGET_MOON_H)
@@ -501,9 +508,7 @@ def _draw_widget_column(
 
     if weather.weather is not None:
         weather_box = (widget_left, y, widget_right, height - MARGIN)
-        _draw_weather_widget(
-            image, draw, weather_box, weather.weather, label_font, value_font
-        )
+        _draw_weather_widget(image, draw, weather_box, weather.weather)
 
 
 def _draw_dawn_dusk_widget(
@@ -512,16 +517,13 @@ def _draw_dawn_dusk_widget(
     box: tuple[int, int, int, int],
     weather: WeatherSnapshot,
     label_font,
+    value_font,
 ) -> None:
     x0, y0, x1, _y1 = box
     draw.rounded_rectangle(
         box, radius=_WIDGET_CORNER_RADIUS, outline=color("black"), width=_WIDGET_BORDER_W
     )
     half_w = (x1 - x0) // 2
-    # A smaller bold size than the other widgets' value font — each half of
-    # this widget is only ~half the (already narrow) column wide, and
-    # "7:11 PM" doesn't fit that at the larger size.
-    time_font = vendored_font(bold=True, size=_FONT_TIME_VALUE)
 
     _draw_sun_icon(draw, x0 + _WIDGET_PAD, y0 + _WIDGET_PAD, rising=True)
     _draw_sun_icon(draw, x0 + half_w + _WIDGET_PAD // 2, y0 + _WIDGET_PAD, rising=False)
@@ -532,20 +534,23 @@ def _draw_dawn_dusk_widget(
         image, (x0 + half_w + _WIDGET_PAD, label_y), "Sunset", fill="black", font=label_font
     )
 
+    # 24-hour time, matching the event list's existing %H:%M format (#178
+    # requirement 1) — also narrower than 12-hour + AM/PM, so this fits the
+    # full widget value font without the smaller font #167 originally needed.
     value_y = label_y + line_height(label_font) + 2
     draw_text(
         image,
         (x0 + _WIDGET_PAD, value_y),
-        weather.sunrise.strftime("%-I:%M %p"),
+        weather.sunrise.strftime("%H:%M"),
         fill="black",
-        font=time_font,
+        font=value_font,
     )
     draw_text(
         image,
         (x0 + half_w + _WIDGET_PAD, value_y),
-        weather.sunset.strftime("%-I:%M %p"),
+        weather.sunset.strftime("%H:%M"),
         fill="black",
-        font=time_font,
+        font=value_font,
     )
 
 
@@ -556,16 +561,23 @@ def _draw_moon_widget(
     weather: WeatherSnapshot,
     title_font,
 ) -> None:
-    x0, y0, _x1, y1 = box
+    x0, y0, x1, y1 = box
     draw.rounded_rectangle(
         box, radius=_WIDGET_CORNER_RADIUS, outline=color("black"), width=_WIDGET_BORDER_W
     )
     icon_y = y0 + (y1 - y0 - _ICON_SIZE) // 2
     _draw_moon_icon(image, draw, x0 + _WIDGET_PAD, icon_y, weather.moon_phase)
 
+    # A two-word phase name like "Waxing Crescent" doesn't fit this narrow
+    # widget on one line (#178 requirement 2) — wrap it the same way event
+    # summaries wrap, sized to the space left after the icon.
     text_x = x0 + _WIDGET_PAD + _ICON_SIZE + _WIDGET_PAD
-    text_y = y0 + (y1 - y0 - line_height(title_font)) // 2
-    draw_text(image, (text_x, text_y), weather.moon_phase, fill="black", font=title_font)
+    max_text_w = max(x1 - _WIDGET_PAD - text_x, 1)
+    lines = wrap_text(weather.moon_phase, max_text_w, font=title_font) or [weather.moon_phase]
+    line_h = line_height(title_font)
+    text_y = y0 + (y1 - y0 - line_h * len(lines)) // 2
+    for i, line in enumerate(lines):
+        draw_text(image, (text_x, text_y + i * line_h), line, fill="black", font=title_font)
 
 
 def _draw_weather_widget(
@@ -573,106 +585,80 @@ def _draw_weather_widget(
     draw: ImageDraw.ImageDraw,
     box: tuple[int, int, int, int],
     reading,
-    label_font,
-    value_font,
 ) -> None:
-    x0, y0, x1, _y1 = box
+    """H/L at the top, then each same-day forecast period as a stacked row:
+    the period label on its own line, then that period's own condition icon
+    + temperature on the next (#178 requirement 4 — replaces the single
+    ambiguous top icon/temp/condition #167 originally drew)."""
+    x0, y0, _x1, _y1 = box
     draw.rounded_rectangle(
         box, radius=_WIDGET_CORNER_RADIUS, outline=color("black"), width=_WIDGET_BORDER_W
     )
     pad = _WIDGET_PAD
+    hl_label_font = vendored_font(bold=True, size=_FONT_HL_LABEL)
+    hl_value_font = vendored_font(bold=True, size=_FONT_HL_VALUE)
 
-    _draw_condition_icon(draw, x0 + pad, y0 + pad, reading.condition)
-
-    text_x = x0 + pad + _ICON_SIZE + pad
-    draw_text(
-        image, (text_x, y0 + pad), f"{round(reading.temp_f)}°F", fill="black", font=value_font
-    )
-    draw_text(
-        image,
-        (text_x, y0 + pad + line_height(value_font) + 2),
-        reading.condition.capitalize(),
-        fill="black",
-        font=label_font,
-    )
-
-    hi_lo_y = y0 + pad + _ICON_SIZE + pad
-    draw_text(
-        image,
-        (x0 + pad, hi_lo_y),
-        f"H:{round(reading.high_f)}°  L:{round(reading.low_f)}°",
-        fill="black",
-        font=label_font,
-    )
+    hl_top = y0 + pad
+    hl_text_y = hl_top + (line_height(hl_value_font) - line_height(hl_label_font)) // 2
+    hx = x0 + pad
+    for prefix, temp in (("H:", reading.high_f), ("L:", reading.low_f)):
+        draw_text(image, (hx, hl_text_y), prefix, fill="black", font=hl_label_font)
+        hx += text_size(prefix, font=hl_label_font)[0] + 3
+        value = f"{round(temp)}°"
+        draw_text(image, (hx, hl_top), value, fill="black", font=hl_value_font)
+        hx += text_size(value, font=hl_value_font)[0] + 14
 
     if not reading.forecast:
         return
 
-    strip_y = hi_lo_y + line_height(label_font) + pad
-    draw.line([(x0 + pad, strip_y), (x1 - pad, strip_y)], fill=color("black"), width=1)
-    strip_y += pad // 2
-
-    # A smaller font than the other widget labels, and ellipsized as a last
-    # resort — three columns in this (already narrow) widget don't leave
-    # room for a label like "This Afternoon" at the normal label size.
+    row_y = hl_top + line_height(hl_value_font) + pad
     forecast_label_font = vendored_font(size=_FONT_FORECAST_LABEL)
-    col_w = (x1 - x0 - 2 * pad) / len(reading.forecast)
-    for i, point in enumerate(reading.forecast):
-        col_x = x0 + pad + i * col_w
-        label_text = ellipsize(point.label, round(col_w), font=forecast_label_font)
-        label_w = text_size(label_text, font=forecast_label_font)[0]
-        draw_text(
-            image,
-            (round(col_x + (col_w - label_w) / 2), strip_y),
-            label_text,
-            fill="black",
-            font=forecast_label_font,
-        )
+    forecast_temp_font = vendored_font(bold=True, size=_FONT_FORECAST_TEMP)
+    label_line_h = line_height(forecast_label_font)
+    row_h = label_line_h + 2 + _FORECAST_ICON_SIZE
+
+    for point in reading.forecast:
+        draw_text(image, (x0 + pad, row_y), point.label, fill="black", font=forecast_label_font)
+        icon_y = row_y + label_line_h + 2
+        _draw_condition_icon(draw, x0 + pad, icon_y, point.condition, size=_FORECAST_ICON_SIZE)
+
         temp_str = f"{round(point.temp_f)}°"
-        temp_w = text_size(temp_str, font=value_font)[0]
-        draw_text(
-            image,
-            (round(col_x + (col_w - temp_w) / 2), strip_y + line_height(forecast_label_font) + 2),
-            temp_str,
-            fill="black",
-            font=value_font,
-        )
+        temp_x = x0 + pad + _FORECAST_ICON_SIZE + pad
+        temp_y = icon_y + (_FORECAST_ICON_SIZE - line_height(forecast_temp_font)) // 2
+        draw_text(image, (temp_x, temp_y), temp_str, fill="black", font=forecast_temp_font)
+
+        row_y += row_h + _FORECAST_ROW_GAP
 
 
 def _draw_sun_icon(draw: ImageDraw.ImageDraw, x: int, y: int, *, rising: bool) -> None:
-    """A flat sun-over-horizon icon with an arrow: up for sunrise, down for
-    sunset. Black/white only, per the widget column's icon convention."""
+    """A yellow-filled sun dome sitting on the horizon line, with a solid
+    triangle arrow in the band directly below indicating rising (points up)
+    or setting (points down) — both sunrise and sunset use the same band
+    below the horizon, differentiated purely by arrow direction (#178
+    requirement 3; the original #167 icon had no visible dome — its fill
+    was white-on-white — and split the arrows above/below the horizon,
+    which read as asymmetric once rendered against a real mock)."""
     size = _ICON_SIZE
-    horizon_y = y + size * 0.65
     cx = x + size / 2
+    horizon_y = y + size * 0.45
+    r = size * 0.3
 
-    draw.line([(x, horizon_y), (x + size, horizon_y)], fill=color("black"), width=2)
-
-    r = size * 0.28
     draw.pieslice(
         [(cx - r, horizon_y - r), (cx + r, horizon_y + r)],
         180,
         360,
         outline=color("black"),
-        fill=color("white"),
+        fill=color("yellow"),
         width=2,
     )
+    draw.line([(x, horizon_y), (x + size, horizon_y)], fill=color("black"), width=2)
 
-    arrow_top, arrow_bottom = y, horizon_y - r - 4
-    if rising:
-        draw.line([(cx, arrow_bottom), (cx, arrow_top)], fill=color("black"), width=2)
-        draw.line(
-            [(cx - 4, arrow_top + 5), (cx, arrow_top), (cx + 4, arrow_top + 5)],
-            fill=color("black"),
-            width=2,
-        )
-    else:
-        draw.line([(cx, arrow_top), (cx, arrow_bottom)], fill=color("black"), width=2)
-        draw.line(
-            [(cx - 4, arrow_bottom - 5), (cx, arrow_bottom), (cx + 4, arrow_bottom - 5)],
-            fill=color("black"),
-            width=2,
-        )
+    band_top, band_bottom = horizon_y + 3, y + size
+    tri_half_w = size * 0.16
+    apex, base = (band_top, band_bottom) if rising else (band_bottom, band_top)
+    draw.polygon(
+        [(cx, apex), (cx - tri_half_w, base), (cx + tri_half_w, base)], fill=color("black")
+    )
 
 
 def _draw_moon_icon(
@@ -710,59 +696,72 @@ def _draw_moon_icon(
     draw.ellipse(box, outline=color("black"), width=2)
 
 
-def _draw_condition_icon(draw: ImageDraw.ImageDraw, x: int, y: int, condition: str) -> None:
-    """A flat weather-condition icon: sun rays for "clear"; a cloud base,
-    optionally with rain/snow/storm marks, for everything else."""
-    size = _ICON_SIZE
-    cx, cy = x + size / 2, y + size / 2
-
-    if condition == "clear":
-        r = size * 0.3
-        draw.ellipse(
-            [(cx - r, cy - r), (cx + r, cy + r)],
-            outline=color("black"),
-            fill=color("white"),
+def _draw_condition_icon(
+    draw: ImageDraw.ImageDraw, x: int, y: int, condition: str, size: float
+) -> None:
+    """A flat, hard-edged icon for one of the six values ``_condition_name()``
+    (``weather_source/fetch.py``, #177) can return: sunny, partly sunny,
+    partly cloudy, cloudy, rain, snow. The sun is filled yellow (matching
+    the dawn/dusk dome); rain/snow marks are blue; cloud shapes stay
+    black-on-white — every shape is still hard-edged, no gray, no
+    anti-aliasing (#178 requirement 4).
+    """
+    if condition == "sunny":
+        _draw_sun_shape(draw, x, y, size, rays=True)
+        return
+    if condition == "partly sunny":
+        # Sun dominant (mostly visible), a smaller cloud at its base.
+        _draw_sun_shape(draw, x, y, size * 0.85, rays=True)
+        _draw_cloud(draw, x + size * 0.15, y + size * 0.4, size * 0.7)
+        return
+    if condition == "partly cloudy":
+        # Cloud dominant, a smaller sun peeking out from behind it.
+        _draw_sun_shape(draw, x, y, size * 0.55, rays=False)
+        _draw_cloud(draw, x + size * 0.05, y + size * 0.2, size * 0.85)
+        return
+    if condition == "cloudy":
+        _draw_cloud(draw, x, y, size)
+        return
+    if condition == "snow":
+        _draw_cloud(draw, x, y, size)
+        for dx in (0.3, 0.55, 0.8):
+            _draw_snowflake(draw, x + size * dx, y + size * 0.85, size * 0.14)
+        return
+    # "rain", and any value _condition_name() doesn't otherwise map (its own
+    # storm -> rain fallback) — a cloud with blue raindrop marks below it.
+    _draw_cloud(draw, x, y, size)
+    for dx in (0.25, 0.5, 0.75):
+        lx = x + size * dx
+        draw.line(
+            [(lx, y + size * 0.75), (lx - size * 0.1, y + size * 0.95)],
+            fill=color("blue"),
             width=2,
         )
-        for angle in range(0, 360, 45):
-            rad = math.radians(angle)
-            x0 = cx + math.cos(rad) * (r + 2)
-            y0 = cy + math.sin(rad) * (r + 2)
-            x1 = cx + math.cos(rad) * (r + 7)
-            y1 = cy + math.sin(rad) * (r + 7)
-            draw.line([(x0, y0), (x1, y1)], fill=color("black"), width=2)
+
+
+def _draw_sun_shape(
+    draw: ImageDraw.ImageDraw, x: int, y: int, size: float, *, rays: bool
+) -> None:
+    """A filled-yellow sun circle — with rays when it's the dominant shape
+    in its icon (sunny; the sun half of partly-sunny), without them when
+    it's peeking from behind a cloud (partly-cloudy)."""
+    cx, cy = x + size / 2, y + size / 2
+    r = size * 0.3
+    draw.ellipse(
+        [(cx - r, cy - r), (cx + r, cy + r)], outline=color("black"), fill=color("yellow"), width=2
+    )
+    if not rays:
         return
-
-    _draw_cloud(draw, x, y, size)
-    if condition == "rain":
-        for dx in (0.25, 0.5, 0.75):
-            lx = x + size * dx
-            draw.line(
-                [(lx, y + size * 0.75), (lx - 3, y + size * 0.95)], fill=color("black"), width=2
-            )
-    elif condition == "snow":
-        for dx in (0.3, 0.55, 0.8):
-            _draw_snowflake(draw, x + size * dx, y + size * 0.85, 4)
-    elif condition == "storm":
-        draw.polygon(
-            [
-                (x + size * 0.55, y + size * 0.65),
-                (x + size * 0.4, y + size * 0.85),
-                (x + size * 0.52, y + size * 0.85),
-                (x + size * 0.4, y + size * 1.0),
-            ],
-            fill=color("black"),
-        )
-    elif condition == "fog":
-        for dy in (0.55, 0.7, 0.85):
-            draw.line(
-                [(x + size * 0.1, y + size * dy), (x + size * 0.9, y + size * dy)],
-                fill=color("black"),
-                width=2,
-            )
+    for angle in range(0, 360, 45):
+        rad = math.radians(angle)
+        x0 = cx + math.cos(rad) * (r + 2)
+        y0 = cy + math.sin(rad) * (r + 2)
+        x1 = cx + math.cos(rad) * (r + size * 0.18)
+        y1 = cy + math.sin(rad) * (r + size * 0.18)
+        draw.line([(x0, y0), (x1, y1)], fill=color("black"), width=2)
 
 
-def _draw_cloud(draw: ImageDraw.ImageDraw, x: int, y: int, size: float) -> None:
+def _draw_cloud(draw: ImageDraw.ImageDraw, x: float, y: float, size: float) -> None:
     r = size * 0.22
     for dx, scale in ((0.1, 1.0), (0.35, 1.2), (0.55, 1.0)):
         r2 = r * scale
@@ -785,4 +784,4 @@ def _draw_snowflake(draw: ImageDraw.ImageDraw, cx: float, cy: float, r: float) -
     for angle in (0, 60, 120):
         rad = math.radians(angle)
         dx, dy = math.cos(rad) * r, math.sin(rad) * r
-        draw.line([(cx - dx, cy - dy), (cx + dx, cy + dy)], fill=color("black"), width=1)
+        draw.line([(cx - dx, cy - dy), (cx + dx, cy + dy)], fill=color("blue"), width=1)
