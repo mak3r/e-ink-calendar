@@ -31,16 +31,20 @@ _API_URL = "https://api.open-meteo.com/v1/forecast"
 _TIMEOUT_S = 10
 
 # WMO weather-interpretation codes (what Open-Meteo's weather_code returns),
-# collapsed to the small vocabulary render/day_view.py's hand-drawn icons
-# will switch on (#167) — see https://open-meteo.com/en/docs for the full table.
-_CLEAR = frozenset({0})
-_CLOUDY = frozenset({1, 2, 3})
-_FOG = frozenset({45, 48})
+# mapped to the six-value "northeast US/Canada" vocabulary render/day_view.py's
+# per-period hand-drawn icons switch on (#177/#178) — see
+# https://open-meteo.com/en/docs for the full WMO code table. Storm and fog
+# have no dedicated icon and fall back to the closest of the six (storm ->
+# rain, fog -> cloudy) rather than getting their own bucket.
+_SUNNY = frozenset({0})
+_PARTLY_SUNNY = frozenset({1})
+_PARTLY_CLOUDY = frozenset({2})
+_CLOUDY = frozenset({3, 45, 48})  # overcast, plus fog's fallback
 _SNOW = frozenset(range(71, 78)) | {85, 86}
-_STORM = frozenset(range(95, 100))
-# Everything else in the drizzle/rain/rain-shower ranges (51-67, 80-82) — and
-# any WMO code Open-Meteo adds later that isn't in the sets above — falls
-# through to "rain" as the closest safe default rather than raising.
+# Everything else — drizzle/rain/rain-showers (51-67, 80-82), thunderstorms
+# (95-99, storm's fallback), and any WMO code Open-Meteo adds later that
+# isn't in the sets above — falls through to "rain" as the closest safe
+# default rather than raising.
 
 # Same-day forecast strip: local hour -> the point's label (#167's mockup).
 _FORECAST_HOURS = (("This Afternoon", 15), ("Tonight", 21))
@@ -142,27 +146,34 @@ def _hour_index(times: list[str], target_hour: int) -> int | None:
 
 
 def _condition_name(code: int) -> str:
-    if code in _CLEAR:
-        return "clear"
+    if code in _SUNNY:
+        return "sunny"
+    if code in _PARTLY_SUNNY:
+        return "partly sunny"
+    if code in _PARTLY_CLOUDY:
+        return "partly cloudy"
     if code in _CLOUDY:
         return "cloudy"
-    if code in _FOG:
-        return "fog"
     if code in _SNOW:
         return "snow"
-    if code in _STORM:
-        return "storm"
     return "rain"
 
 
-def compute_solar_lunar(when: date, lat: float, lon: float) -> tuple[datetime, datetime, str]:
-    """Sunrise, sunset, and moon phase name for ``when`` at ``(lat, lon)``.
+def compute_solar_lunar(
+    when: date, lat: float, lon: float, tz_name: str
+) -> tuple[datetime, datetime, str]:
+    """Sunrise, sunset, and moon phase name for ``when`` at ``(lat, lon)``,
+    with sunrise/sunset already converted to ``tz_name`` (e.g. the
+    household's configured ``refresh.timezone``).
 
     Deterministic and local — no network call — so it's safe (and correct)
-    to call fresh on every render rather than caching the result.
+    to call fresh on every render rather than caching the result. Without
+    ``tz_name``, astral's ``LocationInfo`` defaults to UTC and callers would
+    get UTC-aware sunrise/sunset — the bug behind #177 (a real device
+    showed an evening sunrise and a morning sunset).
     """
-    location = LocationInfo(latitude=lat, longitude=lon)
-    solar = sun(location.observer, date=when)
+    location = LocationInfo(latitude=lat, longitude=lon, timezone=tz_name)
+    solar = sun(location.observer, date=when, tzinfo=location.timezone)
     phase_name = _moon_phase_name(moon.phase(when))
     return solar["sunrise"], solar["sunset"], phase_name
 
