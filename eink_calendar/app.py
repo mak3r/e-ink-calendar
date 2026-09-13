@@ -64,12 +64,12 @@ class App:
         self._weather_snapshot: WeatherSnapshot | None = None
         if config.weather:
             sunrise, sunset, moon_phase = compute_solar_lunar(
-                self._today(), config.weather.lat, config.weather.lon
+                self._today(), config.weather.lat, config.weather.lon, config.refresh.timezone
             )
             self._weather_snapshot = WeatherSnapshot(
                 weather=self._weather_cache.reading,
-                sunrise=sunrise.astimezone(self._tz),
-                sunset=sunset.astimezone(self._tz),
+                sunrise=sunrise,
+                sunset=sunset,
                 moon_phase=moon_phase,
             )
 
@@ -178,14 +178,11 @@ class App:
             save_weather_cache(self._weather_cache_path, self._weather_cache)
 
         sunrise, sunset, moon_phase = compute_solar_lunar(
-            self._today(), weather_config.lat, weather_config.lon
+            self._today(), weather_config.lat, weather_config.lon, self._config.refresh.timezone
         )
         with self._lock:
             self._weather_snapshot = WeatherSnapshot(
-                weather=reading,
-                sunrise=sunrise.astimezone(self._tz),
-                sunset=sunset.astimezone(self._tz),
-                moon_phase=moon_phase,
+                weather=reading, sunrise=sunrise, sunset=sunset, moon_phase=moon_phase
             )
 
     def _fetch_all(self) -> list[Event]:
