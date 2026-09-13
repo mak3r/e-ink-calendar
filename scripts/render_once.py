@@ -149,12 +149,11 @@ def _weather_snapshot(
         except Exception:  # noqa: BLE001 -- a bad weather fetch must never blank the widget
             print("weather fetch failed; using cached reading if any")
 
-    sunrise, sunset, moon_phase = compute_solar_lunar(today, config.weather.lat, config.weather.lon)
+    sunrise, sunset, moon_phase = compute_solar_lunar(
+        today, config.weather.lat, config.weather.lon, config.refresh.timezone
+    )
     return WeatherSnapshot(
-        weather=weather_cache.reading,
-        sunrise=sunrise.astimezone(tz),
-        sunset=sunset.astimezone(tz),
-        moon_phase=moon_phase,
+        weather=weather_cache.reading, sunrise=sunrise, sunset=sunset, moon_phase=moon_phase
     )
 
 

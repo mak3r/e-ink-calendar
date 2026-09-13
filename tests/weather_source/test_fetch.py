@@ -10,27 +10,66 @@ network/parse failure — the cache-fallback contract lives one layer up, in
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta
 from typing import Self
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
-from eink_calendar.weather_source.fetch import compute_solar_lunar, fetch_weather
+import pytest
 
-# New York City, summer solstice 2024 — a fixed, reproducible (date, lat, lon)
-# triple. Sunrise time is in local-evening terms (astral computes against the
-# UTC calendar date, so a negative-UTC-offset location's sunset can land on
-# the UTC date *before* the requested local date — the wall-clock time itself
-# is still the correct evening sunset).
+from eink_calendar.weather_source.fetch import (
+    _condition_name,
+    compute_solar_lunar,
+    fetch_weather,
+)
+
+# New York City, a fixed, reproducible (date, lat, lon, timezone) fixture.
 _NYC_LAT, _NYC_LON = 40.7128, -74.0060
-_SOLSTICE = date(2024, 6, 21)
+_NYC_TZ = "America/New_York"
+_FIXED_DATE = date(2026, 9, 11)
 
 
 def test_compute_solar_lunar_matches_known_values_for_a_fixed_date_and_location():
-    sunrise, sunset, moon_phase = compute_solar_lunar(_SOLSTICE, _NYC_LAT, _NYC_LON)
+    sunrise, sunset, moon_phase = compute_solar_lunar(
+        _FIXED_DATE, _NYC_LAT, _NYC_LON, _NYC_TZ
+    )
 
-    assert sunrise == datetime(2024, 6, 21, 9, 25, 23, 756609, tzinfo=timezone.utc)
-    assert sunset == datetime(2024, 6, 21, 0, 30, 22, 694990, tzinfo=timezone.utc)
-    assert moon_phase == "Waxing Gibbous"
+    assert sunrise == datetime(2026, 9, 11, 6, 33, 6, 62604, tzinfo=ZoneInfo(_NYC_TZ))
+    assert sunset == datetime(2026, 9, 11, 19, 11, 24, 293604, tzinfo=ZoneInfo(_NYC_TZ))
+    assert moon_phase == "New Moon"
+
+
+def test_compute_solar_lunar_returns_local_time_not_utc():
+    """Regression guard for #177: without a timezone conversion, sunrise
+    would land in the UTC morning and read as an evening time locally (a
+    real device showed an evening sunrise and a morning sunset)."""
+    sunrise, sunset, _ = compute_solar_lunar(_FIXED_DATE, _NYC_LAT, _NYC_LON, _NYC_TZ)
+
+    assert sunrise.utcoffset() != timedelta(0)
+    assert sunrise.hour < 12, "NYC sunrise should be a local morning hour"
+    assert sunset.hour >= 12, "NYC sunset should be a local afternoon/evening hour"
+
+
+@pytest.mark.parametrize(
+    ("code", "expected"),
+    [
+        (0, "sunny"),
+        (1, "partly sunny"),
+        (2, "partly cloudy"),
+        (3, "cloudy"),
+        (45, "cloudy"),  # fog falls back to cloudy — no dedicated icon
+        (48, "cloudy"),
+        (61, "rain"),
+        (80, "rain"),
+        (71, "snow"),
+        (85, "snow"),
+        (95, "rain"),  # storm falls back to rain — no dedicated icon
+        (99, "rain"),
+        (200, "rain"),  # unknown code -> safe default, never raises
+    ],
+)
+def test_condition_name_maps_wmo_codes_to_the_six_value_vocabulary(code, expected):
+    assert _condition_name(code) == expected
 
 
 def _open_meteo_response(*, weather_code: int = 0) -> bytes:
@@ -69,23 +108,23 @@ def test_fetch_weather_parses_current_and_same_day_forecast():
         reading = fetch_weather(_NYC_LAT, _NYC_LON)
 
     assert reading.temp_f == 72.5
-    assert reading.condition == "clear"
+    assert reading.condition == "sunny"
     assert reading.high_f == 78.0
     assert reading.low_f == 61.0
 
     labels = [point.label for point in reading.forecast]
-    assert labels == ["Now", "This Afternoon", "Tonight"]
+    assert labels == ["Morning", "This Afternoon", "Tonight"]
     afternoon = next(p for p in reading.forecast if p.label == "This Afternoon")
     assert afternoon.temp_f == 70.0 + 15
 
 
-def test_fetch_weather_maps_storm_condition_code():
+def test_fetch_weather_falls_back_to_rain_for_a_storm_wmo_code():
     with patch(
         "eink_calendar.weather_source.fetch.urllib.request.urlopen",
         return_value=_FakeResponse(_open_meteo_response(weather_code=95)),
     ):
         reading = fetch_weather(_NYC_LAT, _NYC_LON)
-    assert reading.condition == "storm"
+    assert reading.condition == "rain"
 
 
 def test_fetch_weather_raises_on_malformed_json():

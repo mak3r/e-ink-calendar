@@ -35,9 +35,9 @@ def _snapshot(*, with_reading: bool = True) -> WeatherSnapshot:
             high_f=72.0,
             low_f=55.0,
             forecast=[
-                ForecastPoint(label="Now", temp_f=68.0, condition="cloudy"),
+                ForecastPoint(label="Morning", temp_f=68.0, condition="cloudy"),
                 ForecastPoint(label="This Afternoon", temp_f=70.0, condition="cloudy"),
-                ForecastPoint(label="Tonight", temp_f=60.0, condition="clear"),
+                ForecastPoint(label="Tonight", temp_f=60.0, condition="sunny"),
             ],
         )
         if with_reading
