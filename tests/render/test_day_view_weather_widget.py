@@ -127,7 +127,7 @@ def test_weather_widget_renders_stacked_forecast_rows_not_a_single_top_block():
         low_f=55.0,
         forecast=[
             ForecastPoint(label="Morning", temp_f=68.0, condition="sunny"),
-            ForecastPoint(label="This Afternoon", temp_f=70.0, condition="rain"),
+            ForecastPoint(label="Afternoon", temp_f=70.0, condition="rain"),
             ForecastPoint(label="Tonight", temp_f=60.0, condition="snow"),
         ],
     )
