@@ -59,7 +59,8 @@ eink_calendar/
   render/
     palette.py              PALETTE dict - the single source of truth for color
     renderer.py             dispatch (view_mode, events) -> PIL.Image
-    day_view.py             day layout (event cards + widget column)
+    day_view.py             day layout: event cards + widget column (dawn/dusk,
+                             moon phase, weather with per-period condition icons)
     week_view.py            week layout
     month_view.py           month grid layout
     layout_common.py        shared layout/text helpers
@@ -69,7 +70,9 @@ eink_calendar/
     models.py               WeatherSnapshot: Open-Meteo reading (cached) +
                              astral-computed sunrise/sunset/moon phase (not cached)
     fetch.py                fetch_weather(lat, lon) - Open-Meteo GET via urllib;
-                             solar/lunar computed via astral, never fetched
+                             compute_solar_lunar() computes sunrise/sunset/moon
+                             phase via astral, converting to refresh.timezone
+                             before returning (never fetched, never cached)
     cache.py                JSON cache of the last-fetched *weather* half only
                             (solar/lunar is cheaper to recompute than to cache)
     __init__.py
@@ -513,7 +516,13 @@ never `main` HEAD.
   is why the weather widget must degrade to the last cached snapshot (or no
   widget, on first run) on a failed fetch rather than blocking the render or
   crashing, the same way the calendar side already handles a failed Google
-  fetch.
+  fetch. Open-Meteo's WMO weather codes are collapsed by
+  `weather_source/fetch.py::_condition_name()` into a six-value vocabulary —
+  **sunny, partly sunny, partly cloudy, cloudy, rain, snow** — one per
+  same-day forecast period, each with its own condition icon in the weather
+  widget. Storm and fog codes have no dedicated icon and fall back to the
+  closest of these six (fog -> cloudy, storm -> rain) rather than getting
+  special-cased handling.
 - **[astral](https://pypi.org/project/astral/)** ([GitHub](https://github.com/sffjunkie/astral)) —
   sunrise, sunset, and moon phase, computed locally and offline from
   `(date, lat, lon)`. No network call, no API key, and — since nothing is
@@ -521,6 +530,10 @@ never `main` HEAD.
   the widget column is *more* reliable than either the weather fetch or the
   Google Calendar integration, since there is no external service involved
   at all. Recomputed fresh on every render; never cached.
+  `compute_solar_lunar()` converts sunrise/sunset to the configured
+  `refresh.timezone` before returning them — `astral`'s `LocationInfo`
+  defaults to UTC otherwise, which shipped as a real bug (a device showed an
+  evening sunrise and a morning sunset) before this conversion was added.
 - **Python packages that install everywhere** (`requirements-base.txt`):
   `google-api-python-client`, `google-auth`, `google-auth-oauthlib`, `Pillow`,
   `PyYAML`, `astral`. (Open-Meteo needs no client library — `fetch.py` uses
