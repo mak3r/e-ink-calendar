@@ -44,17 +44,29 @@ def test_forecast_hours_use_the_single_word_afternoon_label():
 
 def test_dawn_dusk_time_font_fits_within_half_the_widget_content_width():
     """Regression guard: a shared, wider value font ("20:43" at the old
-    18pt) crowded the border; the dedicated smaller font must leave room."""
+    18pt) crowded the border. Since #209 the value font grows to fill the
+    available width rather than staying at a fixed point size (superseding
+    the fixed-``_FONT_TIME_VALUE`` assumption this test used before), so
+    this replicates that fits-to-width formula for a wide 24-hour fixture
+    and confirms the result still fits -- by construction of the "grow,
+    check it fits, step back" loop it always should, but this guards
+    against a future change to that loop breaking the contract."""
     width = RESOLUTION[0]
     widget_left, widget_right = _widget_bounds(width)
     half_w = (widget_right - widget_left) // 2
-    available = half_w - day_view._WIDGET_PAD
+    available = half_w - 2 * day_view._WIDGET_PAD
 
-    time_font = vendored_font(bold=True, size=day_view._FONT_TIME_VALUE)
+    time_size = day_view._FONT_TIME_VALUE
+    while True:
+        candidate = vendored_font(bold=True, size=time_size + 1)
+        if text_size("20:43", font=candidate)[0] > available:
+            break
+        time_size += 1
+    time_font = vendored_font(bold=True, size=time_size)
     rendered_w, _ = text_size("20:43", font=time_font)
 
     assert rendered_w <= available, (
-        f"'20:43' at {day_view._FONT_TIME_VALUE}pt is {rendered_w}px, "
+        f"'20:43' at the fits-to-width size ({time_size}pt) is {rendered_w}px, "
         f"doesn't fit the {available}px available half-width"
     )
 
@@ -68,25 +80,43 @@ def test_sun_icon_triangle_has_a_reasonable_vertical_extent():
     centerline where it's the only shape present at every height in its
     span (a triangle's fill always includes its centerline column).
 
-    Since #203, the sunrise/sunset icon's size is derived from the label/time
-    text width rather than the fixed ``_ICON_SIZE`` (see
-    ``test_day_view_icon_sizing.py``), so the centerline here is computed
-    with that same text-derived formula, not ``_ICON_SIZE``."""
+    Since #209, the icon is a fixed ``_DAWN_DUSK_ICON_SIZE`` (no longer
+    derived from label/time text width, as #203/#205 had it), and it's
+    centered within its half rather than left-aligned at
+    ``x0 + _WIDGET_PAD`` -- see ``test_day_view_icon_sizing.py`` for the
+    full replicated layout formula this mirrors."""
     width = RESOLUTION[0]
-    widget_left, _ = _widget_bounds(width)
+    widget_left, widget_right = _widget_bounds(width)
+    half_w = (widget_right - widget_left) // 2
     snapshot = WeatherSnapshot(weather=None, sunrise=_WHEN, sunset=_WHEN, moon_phase="Full Moon")
     image = day_view.render([], _WHEN.date(), RESOLUTION, weather=snapshot)
 
+    available_w = half_w - 2 * day_view._WIDGET_PAD
+    time_size = day_view._FONT_TIME_VALUE
+    while True:
+        candidate = vendored_font(bold=True, size=time_size + 1)
+        widest = max(
+            text_size(_WHEN.strftime("%H:%M"), font=candidate)[0],
+            text_size(_WHEN.strftime("%H:%M"), font=candidate)[0],
+        )
+        if widest > available_w:
+            break
+        time_size += 1
+    time_font = vendored_font(bold=True, size=time_size)
     label_font = vendored_font(size=day_view._FONT_WIDGET_LABEL)
-    time_font = vendored_font(bold=True, size=day_view._FONT_TIME_VALUE)
-    size = max(
-        text_size("Sunrise", font=label_font)[0],
-        text_size("Sunset", font=label_font)[0],
-        text_size(_WHEN.strftime("%H:%M"), font=time_font)[0],
-        text_size(_WHEN.strftime("%H:%M"), font=time_font)[0],
-    )
-    cx = widget_left + day_view._WIDGET_PAD + size // 2
-    top = MARGIN + day_view._WIDGET_PAD
+
+    size = day_view._DAWN_DUSK_ICON_SIZE
+    dome_top_offset = size * 0.09
+    ink_bottom_offset = size * 0.655
+    label_h = line_height(label_font)
+    value_h = line_height(time_font)
+    ink_gap, value_gap = 14, 8
+    content_h = (ink_bottom_offset - dome_top_offset) + ink_gap + label_h + value_gap + value_h
+    margin = (day_view._WIDGET_DAWN_DUSK_H - content_h) / 2
+    icon_top = MARGIN + margin - dome_top_offset
+
+    cx = round(widget_left + half_w / 2)
+    top = int(icon_top)
     bottom = top + size + 5
 
     px = image.load()
