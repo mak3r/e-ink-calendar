@@ -1,6 +1,15 @@
 # Sunrise/sunset: maximize icon and time size, center within each half
 
-Status: **approved** — ready for `persona/developer`. **Supersedes**
+Status: **not implemented as written** — the comment posted on #203
+carrying this design did not reach the merged implementation (#205 shipped
+the earlier, narrower `day-view-widget-sun-icon-width-match` spec instead).
+Superseded by [[day-view-widget-sun-icon-final-sizing]]
+(`.claude/plans/day-view-widget-sun-icon-final-sizing.md`), which restates
+this plan's requirements as a standalone issue instead of a comment, and
+adds a triangle-proportion correction found once the (partial) result
+shipped. Kept for history.
+
+Originally: **Supersedes**
 [[day-view-widget-sun-icon-width-match]] (`.claude/plans/day-view-widget-sun-icon-width-match.md`)
 before that plan's issue (#203) was implemented — matching the *current*
 fixed-size text ("Sunrise"/"06:34" at today's `_FONT_WIDGET_LABEL`/
