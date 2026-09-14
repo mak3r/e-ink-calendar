@@ -55,7 +55,6 @@ _RULE_GAP_ABOVE = 2
 _RULE_GAP_BELOW = 8
 
 _KEY_GAP = 16  # between calendar-key legend entries
-_KEY_RIGHT_GAP = 6  # breathing room before the widget column's left border
 
 _COLUMN_FRACTION = 0.75  # event column occupies the left 3/4 of the panel
 _BORDER_W = 2  # constant across every tier
@@ -224,7 +223,7 @@ def render(
     widget_left = column_right + _WIDGET_GAP
 
     _draw_calendar_key(
-        image, draw, groups, calendar_labels or {}, widget_left - _KEY_RIGHT_GAP, key_font,
+        image, draw, groups, calendar_labels or {}, column_right, key_font,
         date_y, date_h,
     )
 
