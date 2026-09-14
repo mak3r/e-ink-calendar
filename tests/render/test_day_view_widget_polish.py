@@ -66,13 +66,25 @@ def test_sun_icon_triangle_has_a_reasonable_vertical_extent():
     comparison is no longer reliable (the dome inflates apparent width), so
     this checks vertical extent only, measured at the triangle's own
     centerline where it's the only shape present at every height in its
-    span (a triangle's fill always includes its centerline column)."""
+    span (a triangle's fill always includes its centerline column).
+
+    Since #203, the sunrise/sunset icon's size is derived from the label/time
+    text width rather than the fixed ``_ICON_SIZE`` (see
+    ``test_day_view_icon_sizing.py``), so the centerline here is computed
+    with that same text-derived formula, not ``_ICON_SIZE``."""
     width = RESOLUTION[0]
     widget_left, _ = _widget_bounds(width)
     snapshot = WeatherSnapshot(weather=None, sunrise=_WHEN, sunset=_WHEN, moon_phase="Full Moon")
     image = day_view.render([], _WHEN.date(), RESOLUTION, weather=snapshot)
 
-    size = day_view._ICON_SIZE
+    label_font = vendored_font(size=day_view._FONT_WIDGET_LABEL)
+    time_font = vendored_font(bold=True, size=day_view._FONT_TIME_VALUE)
+    size = max(
+        text_size("Sunrise", font=label_font)[0],
+        text_size("Sunset", font=label_font)[0],
+        text_size(_WHEN.strftime("%H:%M"), font=time_font)[0],
+        text_size(_WHEN.strftime("%H:%M"), font=time_font)[0],
+    )
     cx = widget_left + day_view._WIDGET_PAD + size // 2
     top = MARGIN + day_view._WIDGET_PAD
     bottom = top + size + 5

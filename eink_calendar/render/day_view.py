@@ -70,7 +70,7 @@ _WIDGET_V_GAP = 10  # between the three stacked widgets
 _WIDGET_PAD = 8
 _WIDGET_BORDER_W = 2
 _WIDGET_CORNER_RADIUS = 8
-_WIDGET_DAWN_DUSK_H = 76
+_WIDGET_DAWN_DUSK_H = 104  # bumped from 76 once the icon grew to match its text column's width (#203)
 _WIDGET_MOON_H = 76
 _FONT_WIDGET_LABEL = 13
 _FONT_WIDGET_TITLE = 15
@@ -527,10 +527,21 @@ def _draw_dawn_dusk_widget(
     # constant #167 originally had before #178 dropped it).
     time_font = vendored_font(bold=True, size=_FONT_TIME_VALUE)
 
-    _draw_sun_icon(draw, x0 + _WIDGET_PAD, y0 + _WIDGET_PAD, rising=True)
-    _draw_sun_icon(draw, x0 + half_w + _WIDGET_PAD // 2, y0 + _WIDGET_PAD, rising=False)
+    # Match the icon's width to the wider of the two text columns below it
+    # (label or time value, whichever column) instead of the fixed,
+    # shared-with-the-moon-icon _ICON_SIZE, which left unused space beside
+    # the text on the real device (#203).
+    icon_size = max(
+        text_size("Sunrise", font=label_font)[0],
+        text_size("Sunset", font=label_font)[0],
+        text_size(weather.sunrise.strftime("%H:%M"), font=time_font)[0],
+        text_size(weather.sunset.strftime("%H:%M"), font=time_font)[0],
+    )
 
-    label_y = y0 + _WIDGET_PAD + _ICON_SIZE + 4
+    _draw_sun_icon(draw, x0 + _WIDGET_PAD, y0 + _WIDGET_PAD, icon_size, rising=True)
+    _draw_sun_icon(draw, x0 + half_w + _WIDGET_PAD // 2, y0 + _WIDGET_PAD, icon_size, rising=False)
+
+    label_y = y0 + _WIDGET_PAD + icon_size + 4
     draw_text(image, (x0 + _WIDGET_PAD, label_y), "Sunrise", fill="black", font=label_font)
     draw_text(
         image, (x0 + half_w + _WIDGET_PAD, label_y), "Sunset", fill="black", font=label_font
@@ -645,7 +656,7 @@ def _draw_weather_widget(
         row_y += row_h + gap
 
 
-def _draw_sun_icon(draw: ImageDraw.ImageDraw, x: int, y: int, *, rising: bool) -> None:
+def _draw_sun_icon(draw: ImageDraw.ImageDraw, x: int, y: int, size: float, *, rising: bool) -> None:
     """A yellow-filled sun dome sitting on the horizon line, with a solid
     triangle arrow straddling the horizon directly (roughly half above, half
     below) indicating rising (points up) or setting (points down) — both
@@ -655,8 +666,10 @@ def _draw_sun_icon(draw: ImageDraw.ImageDraw, x: int, y: int, *, rising: bool) -
     the horizon, which read as asymmetric once rendered against a real
     mock). The triangle straddling the horizon (rather than living entirely
     in the band below it) frees up room to grow both the dome and the
-    triangle within the same icon footprint (#197 requirement 1)."""
-    size = _ICON_SIZE
+    triangle within the same icon footprint (#197 requirement 1). ``size``
+    is caller-supplied (not the module-level ``_ICON_SIZE``) so the dawn/dusk
+    widget can size this icon to match its own text column's width (#203),
+    independent of the moon icon, which still uses ``_ICON_SIZE`` directly."""
     cx = x + size / 2
     horizon_y = y + size * 0.45
     r = size * 0.36

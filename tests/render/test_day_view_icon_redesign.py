@@ -12,7 +12,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from eink_calendar.render import day_view
-from eink_calendar.render.layout_common import MARGIN, line_height, vendored_font
+from eink_calendar.render.layout_common import (
+    MARGIN,
+    line_height,
+    text_size,
+    vendored_font,
+)
 from eink_calendar.weather_source.models import (
     ForecastPoint,
     WeatherReading,
@@ -24,12 +29,27 @@ _WHEN = datetime(2026, 9, 9, tzinfo=timezone.utc)
 
 
 def _dawn_dusk_geometry(width: int) -> tuple[int, int, int, float]:
-    """(sunrise_icon_x0, sunset_icon_x0, sunset icon_x1 bound, horizon_y)."""
+    """(sunrise_icon_x0, sunset_icon_x0, icon size, horizon_y).
+
+    Since #203, the icon's size is derived from the label/time text width
+    (see ``test_day_view_icon_sizing.py``) rather than the fixed
+    ``_ICON_SIZE``, so this replicates that same formula for the fixture's
+    known sunrise/sunset text rather than assuming ``_ICON_SIZE`` — using
+    the stale fixed size here would compute the wrong ``horizon_y`` for the
+    straddle check below.
+    """
     column_right = MARGIN + round((width - 2 * MARGIN) * day_view._COLUMN_FRACTION)
     widget_left = column_right + day_view._WIDGET_GAP
     widget_right = width - MARGIN
     half_w = (widget_right - widget_left) // 2
-    size = day_view._ICON_SIZE
+    label_font = vendored_font(size=day_view._FONT_WIDGET_LABEL)
+    time_font = vendored_font(bold=True, size=day_view._FONT_TIME_VALUE)
+    size = max(
+        text_size("Sunrise", font=label_font)[0],
+        text_size("Sunset", font=label_font)[0],
+        text_size(_WHEN.strftime("%H:%M"), font=time_font)[0],
+        text_size(_WHEN.strftime("%H:%M"), font=time_font)[0],
+    )
     sunrise_x0 = widget_left + day_view._WIDGET_PAD
     sunset_x0 = widget_left + half_w + day_view._WIDGET_PAD // 2
     horizon_y = MARGIN + day_view._WIDGET_PAD + size * 0.45
