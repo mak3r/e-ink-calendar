@@ -74,8 +74,9 @@ _WIDGET_DAWN_DUSK_H = 104  # bumped from 76 once the icon grew to match its text
 _WIDGET_MOON_H = 76
 _FONT_WIDGET_LABEL = 13
 _FONT_WIDGET_TITLE = 15
-_FONT_TIME_VALUE = 14  # sunrise/sunset: half the (narrow) widget width each
-_ICON_SIZE = 28  # dawn/dusk icon; moon phase icon
+_FONT_TIME_VALUE = 14  # starting point _draw_dawn_dusk_widget grows from to fill the available width (#209)
+_ICON_SIZE = 28  # moon phase icon
+_DAWN_DUSK_ICON_SIZE = 56  # sun icon: a fixed constant, independent of the time text's width (#209)
 
 # Weather widget: H/L at the top (larger than other widget labels), then
 # each forecast period as a stacked row (label line, then icon + temp).
@@ -515,55 +516,73 @@ def _draw_dawn_dusk_widget(
     weather: WeatherSnapshot,
     label_font,
 ) -> None:
-    x0, y0, x1, _y1 = box
+    x0, y0, x1, y1 = box
     draw.rounded_rectangle(
         box, radius=_WIDGET_CORNER_RADIUS, outline=color("black"), width=_WIDGET_BORDER_W
     )
     half_w = (x1 - x0) // 2
-    # A dedicated, smaller bold size than the other widgets' value fonts —
-    # each half of this widget is only ~half the (already narrow) column
-    # wide, and a wider-context size crowds the border at 24-hour-format
-    # widths like "20:43" (#185 requirement 3, restoring the dedicated
-    # constant #167 originally had before #178 dropped it).
-    time_font = vendored_font(bold=True, size=_FONT_TIME_VALUE)
+    frame_h = y1 - y0
 
-    # Match the icon's width to the wider of the two text columns below it
-    # (label or time value, whichever column) instead of the fixed,
-    # shared-with-the-moon-icon _ICON_SIZE, which left unused space beside
-    # the text on the real device (#203).
-    icon_size = max(
-        text_size("Sunrise", font=label_font)[0],
-        text_size("Sunset", font=label_font)[0],
-        text_size(weather.sunrise.strftime("%H:%M"), font=time_font)[0],
-        text_size(weather.sunset.strftime("%H:%M"), font=time_font)[0],
-    )
+    # Time value: the largest font whose "%H:%M" text still fits the
+    # available half-width for both columns — grow from _FONT_TIME_VALUE
+    # until it stops fitting, then back off one step, mirroring the
+    # "grow, check it fits, step back" pattern already used elsewhere in
+    # this file for tier fallback, applied to font point size instead of a
+    # discrete tier (#209 requirement 1; #185 requirement 3 originally
+    # picked the fixed starting size this now grows from).
+    available_w = half_w - 2 * _WIDGET_PAD
+    time_size = _FONT_TIME_VALUE
+    while True:
+        candidate = vendored_font(bold=True, size=time_size + 1)
+        widest = max(
+            text_size(weather.sunrise.strftime("%H:%M"), font=candidate)[0],
+            text_size(weather.sunset.strftime("%H:%M"), font=candidate)[0],
+        )
+        if widest > available_w:
+            break
+        time_size += 1
+    time_font = vendored_font(bold=True, size=time_size)
 
-    _draw_sun_icon(draw, x0 + _WIDGET_PAD, y0 + _WIDGET_PAD, icon_size, rising=True)
-    _draw_sun_icon(draw, x0 + half_w + _WIDGET_PAD // 2, y0 + _WIDGET_PAD, icon_size, rising=False)
+    # Icon size is a fixed constant, independent of the time text's width —
+    # matching 1:1 (#203's approach) breaks down once the text is genuinely
+    # maximized, since the icon would then need to be as wide (and thus as
+    # tall) as the time text itself, which doesn't fit this fixed-height
+    # widget alongside two lines of text below it (#209).
+    icon_size = _DAWN_DUSK_ICON_SIZE
 
-    label_y = y0 + _WIDGET_PAD + icon_size + 4
-    draw_text(image, (x0 + _WIDGET_PAD, label_y), "Sunrise", fill="black", font=label_font)
-    draw_text(
-        image, (x0 + half_w + _WIDGET_PAD, label_y), "Sunset", fill="black", font=label_font
-    )
+    # Center the whole icon+label+value block vertically in the widget,
+    # using the icon's actual ink extent (from _draw_sun_icon's own
+    # formulas: dome top at horizon_y - r = size*0.45 - size*0.36 =
+    # size*0.09; band_bottom = size*0.465 + size*0.19 = size*0.655) rather
+    # than its nominal reserved height, so there's no leftover gap baked
+    # into the centering math (#209).
+    dome_top_offset = icon_size * 0.09
+    ink_bottom_offset = icon_size * 0.655
+    label_h = line_height(label_font)
+    value_h = line_height(time_font)
+    ink_gap, value_gap = 14, 8  # tight -- sit close to the ink, not the icon's nominal box
+    content_h = (ink_bottom_offset - dome_top_offset) + ink_gap + label_h + value_gap + value_h
+    margin = (frame_h - content_h) / 2
+    icon_top = y0 + margin - dome_top_offset  # so the dome's own top lands at y0 + margin
 
-    # 24-hour time, matching the event list's existing %H:%M format (#178
-    # requirement 1).
-    value_y = label_y + line_height(label_font) + 2
-    draw_text(
-        image,
-        (x0 + _WIDGET_PAD, value_y),
-        weather.sunrise.strftime("%H:%M"),
-        fill="black",
-        font=time_font,
-    )
-    draw_text(
-        image,
-        (x0 + half_w + _WIDGET_PAD, value_y),
-        weather.sunset.strftime("%H:%M"),
-        fill="black",
-        font=time_font,
-    )
+    for col_offset, label, value, rising in (
+        (0, "Sunrise", weather.sunrise.strftime("%H:%M"), True),
+        (half_w, "Sunset", weather.sunset.strftime("%H:%M"), False),
+    ):
+        cx = x0 + col_offset + half_w / 2
+        ink_bottom = _draw_sun_icon(draw, cx - icon_size / 2, icon_top, icon_size, rising=rising)
+
+        label_w = text_size(label, font=label_font)[0]
+        label_y = ink_bottom + ink_gap
+        draw_text(
+            image, (round(cx - label_w / 2), round(label_y)), label, fill="black", font=label_font
+        )
+
+        value_w = text_size(value, font=time_font)[0]
+        value_y = label_y + label_h + value_gap
+        draw_text(
+            image, (round(cx - value_w / 2), round(value_y)), value, fill="black", font=time_font
+        )
 
 
 def _draw_moon_widget(
@@ -656,7 +675,7 @@ def _draw_weather_widget(
         row_y += row_h + gap
 
 
-def _draw_sun_icon(draw: ImageDraw.ImageDraw, x: int, y: int, size: float, *, rising: bool) -> None:
+def _draw_sun_icon(draw: ImageDraw.ImageDraw, x: float, y: float, size: float, *, rising: bool) -> float:
     """A yellow-filled sun dome sitting on the horizon line, with a solid
     triangle arrow straddling the horizon directly (roughly half above, half
     below) indicating rising (points up) or setting (points down) — both
@@ -668,8 +687,17 @@ def _draw_sun_icon(draw: ImageDraw.ImageDraw, x: int, y: int, size: float, *, ri
     in the band below it) frees up room to grow both the dome and the
     triangle within the same icon footprint (#197 requirement 1). ``size``
     is caller-supplied (not the module-level ``_ICON_SIZE``) so the dawn/dusk
-    widget can size this icon to match its own text column's width (#203),
-    independent of the moon icon, which still uses ``_ICON_SIZE`` directly."""
+    widget can size this icon independently (#203), of the moon icon, which
+    still uses ``_ICON_SIZE`` directly. The triangle is shrunk relative to
+    the dome (tri_half_w: 0.26 -> 0.19) so it reads as an accent rather than
+    a same-size second shape (#209).
+
+    Returns ``band_bottom`` — the triangle's lowest ink pixel, the same
+    value for both directions (the shared band is symmetric; only apex/base
+    swap). Callers must lay out whatever comes next relative to this return
+    value, not ``y + size`` — the icon's nominal reserved box is taller than
+    what it actually draws, and treating ``y + size`` as the bottom leaves
+    dead space (#209)."""
     cx = x + size / 2
     horizon_y = y + size * 0.45
     r = size * 0.36
@@ -684,17 +712,19 @@ def _draw_sun_icon(draw: ImageDraw.ImageDraw, x: int, y: int, size: float, *, ri
     )
     draw.line([(x, horizon_y), (x + size, horizon_y)], fill=color("black"), width=2)
 
-    # A fixed, proportionate size (base ~= height), straddling the horizon
-    # rather than confined to the band below it (#197 requirement 1; #185
-    # requirement 1 established the fixed-proportion part of this).
-    tri_half_w = size * 0.26  # tri_h = tri_half_w * 2 -- preserves the base=height proportion from #185
-    band_center = horizon_y + 3
+    # A fixed, proportionate size, straddling the horizon rather than
+    # confined to the band below it (#197 requirement 1; #185 requirement 1
+    # established the fixed-proportion part of this; #209 shrunk it
+    # relative to the dome).
+    tri_half_w = size * 0.19  # was 0.26 -- shrunk per #209
+    band_center = horizon_y + size * 0.015
     band_top = band_center - tri_half_w
     band_bottom = band_center + tri_half_w
     apex_y, base_y = (band_top, band_bottom) if rising else (band_bottom, band_top)
     draw.polygon(
         [(cx, apex_y), (cx - tri_half_w, base_y), (cx + tri_half_w, base_y)], fill=color("black")
     )
+    return band_bottom
 
 
 def _draw_moon_icon(
