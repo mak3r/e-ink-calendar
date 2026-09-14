@@ -1,7 +1,13 @@
 # Sunrise/sunset icon: size to match the text column's width
 
-Status: **approved** — ready for `persona/developer`. Ninth round of
-feedback on the shipped widget column, following
+Status: **superseded before implementation** by
+[[day-view-widget-sun-icon-maximize-and-center]]
+(`.claude/plans/day-view-widget-sun-icon-maximize-and-center.md`) — #203
+had not yet been picked up when the device owner asked to go further than
+matching the *current* fixed-size text: maximize the fill and center the
+result. #203's description was updated in place (via comment) to point to
+the new plan rather than being implemented as originally written. Kept for
+history. Ninth round of feedback on the shipped widget column, following
 [[day-view-widget-icon-redesign-round2]] (#196-#198).
 
 ## Problem
