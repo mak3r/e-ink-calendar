@@ -47,7 +47,7 @@ _SNOW = frozenset(range(71, 78)) | {85, 86}
 # default rather than raising.
 
 # Same-day forecast strip: local hour -> the point's label (#167's mockup).
-_FORECAST_HOURS = (("This Afternoon", 15), ("Tonight", 21))
+_FORECAST_HOURS = (("Afternoon", 15), ("Tonight", 21))
 
 # astral's moon.phase() returns days-since-new-moon on a 0-27.99 scale (a
 # ~29.53-day lunar month); thresholds are the conventional 8-phase breakpoints.

@@ -74,8 +74,8 @@ _WIDGET_CORNER_RADIUS = 8
 _WIDGET_DAWN_DUSK_H = 76
 _WIDGET_MOON_H = 76
 _FONT_WIDGET_LABEL = 13
-_FONT_WIDGET_VALUE = 18
 _FONT_WIDGET_TITLE = 15
+_FONT_TIME_VALUE = 14  # sunrise/sunset: half the (narrow) widget width each
 _ICON_SIZE = 28  # dawn/dusk icon; moon phase icon
 
 # Weather widget: H/L at the top (larger than other widget labels), then
@@ -494,12 +494,11 @@ def _draw_widget_column(
 
     widget_right = width - MARGIN
     label_font = vendored_font(size=_FONT_WIDGET_LABEL)
-    value_font = vendored_font(bold=True, size=_FONT_WIDGET_VALUE)
     title_font = vendored_font(bold=True, size=_FONT_WIDGET_TITLE)
 
     y = MARGIN
     dawn_dusk_box = (widget_left, y, widget_right, y + _WIDGET_DAWN_DUSK_H)
-    _draw_dawn_dusk_widget(image, draw, dawn_dusk_box, weather, label_font, value_font)
+    _draw_dawn_dusk_widget(image, draw, dawn_dusk_box, weather, label_font)
     y += _WIDGET_DAWN_DUSK_H + _WIDGET_V_GAP
 
     moon_box = (widget_left, y, widget_right, y + _WIDGET_MOON_H)
@@ -517,13 +516,18 @@ def _draw_dawn_dusk_widget(
     box: tuple[int, int, int, int],
     weather: WeatherSnapshot,
     label_font,
-    value_font,
 ) -> None:
     x0, y0, x1, _y1 = box
     draw.rounded_rectangle(
         box, radius=_WIDGET_CORNER_RADIUS, outline=color("black"), width=_WIDGET_BORDER_W
     )
     half_w = (x1 - x0) // 2
+    # A dedicated, smaller bold size than the other widgets' value fonts —
+    # each half of this widget is only ~half the (already narrow) column
+    # wide, and a wider-context size crowds the border at 24-hour-format
+    # widths like "20:43" (#185 requirement 3, restoring the dedicated
+    # constant #167 originally had before #178 dropped it).
+    time_font = vendored_font(bold=True, size=_FONT_TIME_VALUE)
 
     _draw_sun_icon(draw, x0 + _WIDGET_PAD, y0 + _WIDGET_PAD, rising=True)
     _draw_sun_icon(draw, x0 + half_w + _WIDGET_PAD // 2, y0 + _WIDGET_PAD, rising=False)
@@ -535,22 +539,21 @@ def _draw_dawn_dusk_widget(
     )
 
     # 24-hour time, matching the event list's existing %H:%M format (#178
-    # requirement 1) — also narrower than 12-hour + AM/PM, so this fits the
-    # full widget value font without the smaller font #167 originally needed.
+    # requirement 1).
     value_y = label_y + line_height(label_font) + 2
     draw_text(
         image,
         (x0 + _WIDGET_PAD, value_y),
         weather.sunrise.strftime("%H:%M"),
         fill="black",
-        font=value_font,
+        font=time_font,
     )
     draw_text(
         image,
         (x0 + half_w + _WIDGET_PAD, value_y),
         weather.sunset.strftime("%H:%M"),
         fill="black",
-        font=value_font,
+        font=time_font,
     )
 
 
@@ -612,7 +615,7 @@ def _draw_weather_widget(
         return
 
     row_y = hl_top + line_height(hl_value_font) + pad
-    forecast_label_font = vendored_font(size=_FONT_FORECAST_LABEL)
+    forecast_label_font = vendored_font(bold=True, size=_FONT_FORECAST_LABEL)
     forecast_temp_font = vendored_font(bold=True, size=_FONT_FORECAST_TEMP)
     label_line_h = line_height(forecast_label_font)
     row_h = label_line_h + 2 + _FORECAST_ICON_SIZE
@@ -653,11 +656,20 @@ def _draw_sun_icon(draw: ImageDraw.ImageDraw, x: int, y: int, *, rising: bool) -
     )
     draw.line([(x, horizon_y), (x + size, horizon_y)], fill=color("black"), width=2)
 
-    band_top, band_bottom = horizon_y + 3, y + size
-    tri_half_w = size * 0.16
-    apex, base = (band_top, band_bottom) if rising else (band_bottom, band_top)
+    # A fixed, proportionate size (base ~= height) rather than stretching to
+    # fill whatever vertical band happens to be available below the horizon
+    # — the previous size*0.16 half-width stretched across the full band
+    # read as a thin spike, not a clean triangle (#185 requirement 1).
+    band_top = horizon_y + 3
+    tri_half_w = size * 0.22
+    tri_h = tri_half_w * 2
+    if rising:
+        apex_y, base_y = band_top, band_top + tri_h
+    else:
+        band_bottom = y + size
+        apex_y, base_y = band_bottom, band_bottom - tri_h
     draw.polygon(
-        [(cx, apex), (cx - tri_half_w, base), (cx + tri_half_w, base)], fill=color("black")
+        [(cx, apex_y), (cx - tri_half_w, base_y), (cx + tri_half_w, base_y)], fill=color("black")
     )
 
 
