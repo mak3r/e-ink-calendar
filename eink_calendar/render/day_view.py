@@ -647,16 +647,19 @@ def _draw_weather_widget(
 
 def _draw_sun_icon(draw: ImageDraw.ImageDraw, x: int, y: int, *, rising: bool) -> None:
     """A yellow-filled sun dome sitting on the horizon line, with a solid
-    triangle arrow in the band directly below indicating rising (points up)
-    or setting (points down) — both sunrise and sunset use the same band
-    below the horizon, differentiated purely by arrow direction (#178
-    requirement 3; the original #167 icon had no visible dome — its fill
-    was white-on-white — and split the arrows above/below the horizon,
-    which read as asymmetric once rendered against a real mock)."""
+    triangle arrow straddling the horizon directly (roughly half above, half
+    below) indicating rising (points up) or setting (points down) — both
+    sunrise and sunset use the same band, differentiated purely by arrow
+    direction (#178 requirement 3; the original #167 icon had no visible
+    dome — its fill was white-on-white — and split the arrows above/below
+    the horizon, which read as asymmetric once rendered against a real
+    mock). The triangle straddling the horizon (rather than living entirely
+    in the band below it) frees up room to grow both the dome and the
+    triangle within the same icon footprint (#197 requirement 1)."""
     size = _ICON_SIZE
     cx = x + size / 2
     horizon_y = y + size * 0.45
-    r = size * 0.3
+    r = size * 0.36
 
     draw.pieslice(
         [(cx - r, horizon_y - r), (cx + r, horizon_y + r)],
@@ -668,18 +671,14 @@ def _draw_sun_icon(draw: ImageDraw.ImageDraw, x: int, y: int, *, rising: bool) -
     )
     draw.line([(x, horizon_y), (x + size, horizon_y)], fill=color("black"), width=2)
 
-    # A fixed, proportionate size (base ~= height) rather than stretching to
-    # fill whatever vertical band happens to be available below the horizon
-    # — the previous size*0.16 half-width stretched across the full band
-    # read as a thin spike, not a clean triangle (#185 requirement 1).
-    band_top = horizon_y + 3
-    tri_half_w = size * 0.22
-    tri_h = tri_half_w * 2
-    if rising:
-        apex_y, base_y = band_top, band_top + tri_h
-    else:
-        band_bottom = y + size
-        apex_y, base_y = band_bottom, band_bottom - tri_h
+    # A fixed, proportionate size (base ~= height), straddling the horizon
+    # rather than confined to the band below it (#197 requirement 1; #185
+    # requirement 1 established the fixed-proportion part of this).
+    tri_half_w = size * 0.26  # tri_h = tri_half_w * 2 -- preserves the base=height proportion from #185
+    band_center = horizon_y + 3
+    band_top = band_center - tri_half_w
+    band_bottom = band_center + tri_half_w
+    apex_y, base_y = (band_top, band_bottom) if rising else (band_bottom, band_top)
     draw.polygon(
         [(cx, apex_y), (cx - tri_half_w, base_y), (cx + tri_half_w, base_y)], fill=color("black")
     )
@@ -786,19 +785,30 @@ def _draw_sun_shape(
 
 
 def _draw_cloud(draw: ImageDraw.ImageDraw, x: float, y: float, size: float) -> None:
-    r = size * 0.22
-    for dx, scale in ((0.1, 1.0), (0.35, 1.2), (0.55, 1.0)):
-        r2 = r * scale
+    """Three overlapping circles (left, center, right — center bigger/higher,
+    forming the peak) plus one white seam-cleanup ellipse drawn last, no
+    separate flat base (#197 requirement 2 — replaces the previous
+    flat-bottomed three-circles-plus-rectangle shape)."""
+    circles = (
+        (0.30 * size, 0.55 * size, 0.28 * size),
+        (0.55 * size, 0.35 * size, 0.32 * size),
+        (0.75 * size, 0.55 * size, 0.28 * size),
+    )
+    for dcx, dcy, r in circles:
+        cx, cy = x + dcx, y + dcy
         draw.ellipse(
-            [(x + size * dx, y + size * 0.35), (x + size * dx + 2 * r2, y + size * 0.35 + 2 * r2)],
+            [(cx - r, cy - r), (cx + r, cy + r)],
             outline=color("black"),
             fill=color("white"),
             width=2,
         )
-    draw.rounded_rectangle(
-        [(x + size * 0.05, y + size * 0.5), (x + size * 0.95, y + size * 0.7)],
-        radius=round(size * 0.08),
-        outline=color("black"),
+
+    # Erases only the internal seams where the circles cross — stays well
+    # above the circles' own bottom edges (~0.67*size-0.83*size) so the true
+    # outer silhouette isn't clipped flat.
+    draw.ellipse(
+        [(x + size * 0.20, y + size * 0.48), (x + size * 0.85, y + size * 0.62)],
+        outline=color("white"),
         fill=color("white"),
         width=2,
     )
