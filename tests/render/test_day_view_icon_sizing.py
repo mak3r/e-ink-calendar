@@ -68,7 +68,7 @@ def _dawn_dusk_layout(width: int) -> tuple[int, int, int, float, float, int]:
     ink_bottom_offset = icon_size * 0.655
     label_h = line_height(label_font)
     value_h = line_height(time_font)
-    ink_gap, value_gap = 14, 8
+    ink_gap, value_gap = 4, 2  # tightened per #214
     content_h = (ink_bottom_offset - dome_top_offset) + ink_gap + label_h + value_gap + value_h
     margin = (day_view._WIDGET_DAWN_DUSK_H - content_h) / 2
     icon_top = MARGIN + margin - dome_top_offset
