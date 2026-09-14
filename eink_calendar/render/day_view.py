@@ -82,10 +82,9 @@ _ICON_SIZE = 28  # dawn/dusk icon; moon phase icon
 # each forecast period as a stacked row (label line, then icon + temp).
 _FONT_HL_LABEL = 13
 _FONT_HL_VALUE = 22
-_FONT_FORECAST_LABEL = 13
-_FONT_FORECAST_TEMP = 24
+_FONT_FORECAST_LABEL = 14
+_FONT_FORECAST_TEMP = 26
 _FORECAST_ICON_SIZE = 36
-_FORECAST_ROW_GAP = 6
 
 # astral's 8 named phases -> fraction of the disk illuminated (0=new, 1=full).
 _MOON_LIT_FRACTION = {
@@ -230,7 +229,7 @@ def render(
     )
 
     rule_y = date_y + date_h + _RULE_GAP_ABOVE
-    draw.line([(MARGIN, rule_y), (widget_left, rule_y)], fill=color("black"))
+    draw.line([(MARGIN, rule_y), (column_right, rule_y)], fill=color("black"))
 
     _draw_widget_column(image, draw, weather, widget_left, width, height)
 
@@ -592,8 +591,11 @@ def _draw_weather_widget(
     """H/L at the top, then each same-day forecast period as a stacked row:
     the period label on its own line, then that period's own condition icon
     + temperature on the next (#178 requirement 4 — replaces the single
-    ambiguous top icon/temp/condition #167 originally drew)."""
-    x0, y0, _x1, _y1 = box
+    ambiguous top icon/temp/condition #167 originally drew). The forecast
+    rows are space-around distributed across whatever height is left below
+    H/L, rather than packed with a fixed gap, so a light forecast doesn't
+    leave the bottom of the widget empty (#191)."""
+    x0, y0, _x1, y1 = box
     draw.rounded_rectangle(
         box, radius=_WIDGET_CORNER_RADIUS, outline=color("black"), width=_WIDGET_BORDER_W
     )
@@ -614,15 +616,26 @@ def _draw_weather_widget(
     if not reading.forecast:
         return
 
-    row_y = hl_top + line_height(hl_value_font) + pad
+    hl_bottom = hl_top + line_height(hl_value_font)
     forecast_label_font = vendored_font(bold=True, size=_FONT_FORECAST_LABEL)
     forecast_temp_font = vendored_font(bold=True, size=_FONT_FORECAST_TEMP)
     label_line_h = line_height(forecast_label_font)
     row_h = label_line_h + 2 + _FORECAST_ICON_SIZE
 
+    # Space-around: the gap after H/L and the gaps between/after the rows all
+    # get an equal share of whatever height is left, instead of a fixed gap
+    # that leaves the widget's lower portion blank (mirrors the same
+    # "distribute the leftover space" fix already applied to the event-card
+    # list).
+    n = len(reading.forecast)
+    available = (y1 - pad) - hl_bottom
+    slack = max(available - row_h * n, 0)
+    gap = slack / (n + 1)
+
+    row_y = hl_bottom + gap
     for point in reading.forecast:
-        draw_text(image, (x0 + pad, row_y), point.label, fill="black", font=forecast_label_font)
-        icon_y = row_y + label_line_h + 2
+        draw_text(image, (x0 + pad, round(row_y)), point.label, fill="black", font=forecast_label_font)
+        icon_y = round(row_y) + label_line_h + 2
         _draw_condition_icon(draw, x0 + pad, icon_y, point.condition, size=_FORECAST_ICON_SIZE)
 
         temp_str = f"{round(point.temp_f)}°"
@@ -630,7 +643,7 @@ def _draw_weather_widget(
         temp_y = icon_y + (_FORECAST_ICON_SIZE - line_height(forecast_temp_font)) // 2
         draw_text(image, (temp_x, temp_y), temp_str, fill="black", font=forecast_temp_font)
 
-        row_y += row_h + _FORECAST_ROW_GAP
+        row_y += row_h + gap
 
 
 def _draw_sun_icon(draw: ImageDraw.ImageDraw, x: int, y: int, *, rising: bool) -> None:
