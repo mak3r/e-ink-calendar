@@ -28,40 +28,59 @@ RESOLUTION = (800, 480)
 _WHEN = datetime(2026, 9, 9, tzinfo=timezone.utc)
 
 
-def _dawn_dusk_geometry(width: int) -> tuple[int, int, int, float]:
-    """(sunrise_icon_x0, sunset_icon_x0, icon size, horizon_y).
+def _dawn_dusk_geometry(width: int) -> tuple[int, int, int, float, float]:
+    """(sunrise_icon_x0, sunset_icon_x0, icon size, icon_top, horizon_y).
 
-    Since #203, the icon's size is derived from the label/time text width
-    (see ``test_day_view_icon_sizing.py``) rather than the fixed
-    ``_ICON_SIZE``, so this replicates that same formula for the fixture's
-    known sunrise/sunset text rather than assuming ``_ICON_SIZE`` — using
-    the stale fixed size here would compute the wrong ``horizon_y`` for the
-    straddle check below.
+    Since #209, the icon is a fixed ``_DAWN_DUSK_ICON_SIZE`` (no longer
+    derived from label/time text width, as #203 had it) and each column is
+    centered within its half rather than left-aligned at
+    ``x0 + _WIDGET_PAD`` -- this replicates ``_draw_dawn_dusk_widget``'s
+    current centering formula (icon_top depends on the fits-to-width time
+    font's line height, so it must be computed, not assumed) rather than
+    the stale #203-era formula, which would compute the wrong icon
+    position and horizon_y for the straddle check below.
     """
     column_right = MARGIN + round((width - 2 * MARGIN) * day_view._COLUMN_FRACTION)
     widget_left = column_right + day_view._WIDGET_GAP
     widget_right = width - MARGIN
     half_w = (widget_right - widget_left) // 2
+
+    available_w = half_w - 2 * day_view._WIDGET_PAD
+    time_size = day_view._FONT_TIME_VALUE
+    while True:
+        candidate = vendored_font(bold=True, size=time_size + 1)
+        widest = max(
+            text_size(_WHEN.strftime("%H:%M"), font=candidate)[0],
+            text_size(_WHEN.strftime("%H:%M"), font=candidate)[0],
+        )
+        if widest > available_w:
+            break
+        time_size += 1
+    time_font = vendored_font(bold=True, size=time_size)
     label_font = vendored_font(size=day_view._FONT_WIDGET_LABEL)
-    time_font = vendored_font(bold=True, size=day_view._FONT_TIME_VALUE)
-    size = max(
-        text_size("Sunrise", font=label_font)[0],
-        text_size("Sunset", font=label_font)[0],
-        text_size(_WHEN.strftime("%H:%M"), font=time_font)[0],
-        text_size(_WHEN.strftime("%H:%M"), font=time_font)[0],
-    )
-    sunrise_x0 = widget_left + day_view._WIDGET_PAD
-    sunset_x0 = widget_left + half_w + day_view._WIDGET_PAD // 2
-    horizon_y = MARGIN + day_view._WIDGET_PAD + size * 0.45
-    return sunrise_x0, sunset_x0, size, horizon_y
+
+    size = day_view._DAWN_DUSK_ICON_SIZE
+    dome_top_offset = size * 0.09
+    ink_bottom_offset = size * 0.655
+    label_h = line_height(label_font)
+    value_h = line_height(time_font)
+    ink_gap, value_gap = 14, 8
+    content_h = (ink_bottom_offset - dome_top_offset) + ink_gap + label_h + value_gap + value_h
+    margin = (day_view._WIDGET_DAWN_DUSK_H - content_h) / 2
+    icon_top = MARGIN + margin - dome_top_offset
+    horizon_y = icon_top + size * 0.45
+
+    sunrise_x0 = round(widget_left + half_w / 2 - size / 2)
+    sunset_x0 = round(widget_left + half_w + half_w / 2 - size / 2)
+    return sunrise_x0, sunset_x0, size, icon_top, horizon_y
 
 
-def _has_ink_above(image, x0: int, size: int, horizon_y: float) -> bool:
+def _has_ink_above(image, x0: int, size: int, icon_top: float, horizon_y: float) -> bool:
     """Any black ink strictly above the horizon line, within the icon's x
     span — the dome only ever occupies y >= horizon_y, so ink up here can
     only be the arrow triangle straddling upward."""
     px = image.load()
-    top = MARGIN + day_view._WIDGET_PAD
+    top = int(icon_top)
     bottom = int(horizon_y) - 1  # stop short of the horizon line's own row
     return any(
         px[x, y] == (0, 0, 0)
@@ -72,24 +91,24 @@ def _has_ink_above(image, x0: int, size: int, horizon_y: float) -> bool:
 
 def test_sunrise_triangle_straddles_the_horizon():
     width = RESOLUTION[0]
-    sunrise_x0, _sunset_x0, size, horizon_y = _dawn_dusk_geometry(width)
+    sunrise_x0, _sunset_x0, size, icon_top, horizon_y = _dawn_dusk_geometry(width)
     image = day_view.render(
         [], _WHEN.date(), RESOLUTION,
         weather=WeatherSnapshot(weather=None, sunrise=_WHEN, sunset=_WHEN, moon_phase="Full Moon"),
     )
-    assert _has_ink_above(image, sunrise_x0, size, horizon_y), (
+    assert _has_ink_above(image, sunrise_x0, size, icon_top, horizon_y), (
         "no ink above the horizon for the sunrise icon — triangle no longer straddles"
     )
 
 
 def test_sunset_triangle_straddles_the_horizon():
     width = RESOLUTION[0]
-    _sunrise_x0, sunset_x0, size, horizon_y = _dawn_dusk_geometry(width)
+    _sunrise_x0, sunset_x0, size, icon_top, horizon_y = _dawn_dusk_geometry(width)
     image = day_view.render(
         [], _WHEN.date(), RESOLUTION,
         weather=WeatherSnapshot(weather=None, sunrise=_WHEN, sunset=_WHEN, moon_phase="Full Moon"),
     )
-    assert _has_ink_above(image, sunset_x0, size, horizon_y), (
+    assert _has_ink_above(image, sunset_x0, size, icon_top, horizon_y), (
         "no ink above the horizon for the sunset icon — triangle no longer straddles"
     )
 
