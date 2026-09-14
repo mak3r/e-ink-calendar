@@ -560,7 +560,7 @@ def _draw_dawn_dusk_widget(
     ink_bottom_offset = icon_size * 0.655
     label_h = line_height(label_font)
     value_h = line_height(time_font)
-    ink_gap, value_gap = 14, 8  # tight -- sit close to the ink, not the icon's nominal box
+    ink_gap, value_gap = 4, 2  # tight -- sit close to the ink, not the icon's nominal box (#214)
     content_h = (ink_bottom_offset - dome_top_offset) + ink_gap + label_h + value_gap + value_h
     margin = (frame_h - content_h) / 2
     icon_top = y0 + margin - dome_top_offset  # so the dome's own top lands at y0 + margin
