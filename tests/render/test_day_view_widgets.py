@@ -140,3 +140,42 @@ def test_calendar_key_relocates_to_the_date_row():
     )
     assert not in_day_name_row, "calendar key should no longer sit on the day-name row"
     assert in_date_row, "calendar key should be on the date row"
+
+
+def test_calendar_key_right_edge_anchors_to_column_right():
+    """Regression guard for #196: the key's right edge must align with
+    ``column_right`` (matching the rule's endpoint from #191), not the old
+    ``widget_left - _KEY_RIGHT_GAP`` position further left."""
+    width = RESOLUTION[0]
+    column_right = MARGIN + round((width - 2 * MARGIN) * day_view._COLUMN_FRACTION)
+
+    day_font = vendored_font(bold=True, size=day_view._FONT_DAY_NAME)
+    date_font = vendored_font(size=day_view._FONT_DATE)
+    day_name_h = text_size("A", font=day_font)[1]
+    date_y = MARGIN + day_name_h + day_view._DATE_TOP_GAP
+    date_h = text_size("A", font=date_font)[1]
+
+    event = Event(
+        id="a",
+        summary="X",
+        start=_WHEN,
+        end=_WHEN + timedelta(hours=1),
+        all_day=False,
+        calendar_id="primary",
+        color="blue",
+    )
+    image = day_view.render([event], _WHEN.date(), RESOLUTION)
+    px = image.load()
+
+    black_xs = [
+        x for y in range(date_y, date_y + date_h) for x in range(width) if px[x, y] == (0, 0, 0)
+    ]
+    assert black_xs, "no calendar key ink found on the date row"
+    right_edge = max(black_xs)
+
+    assert right_edge <= column_right, (
+        f"key extends to x={right_edge}, past column_right at {column_right}"
+    )
+    assert column_right - right_edge <= 3, (
+        f"key right edge ({right_edge}) doesn't anchor to column_right ({column_right})"
+    )
