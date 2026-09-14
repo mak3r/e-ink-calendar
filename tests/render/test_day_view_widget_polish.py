@@ -117,10 +117,20 @@ def test_forecast_period_labels_render_bold():
 
     pad = day_view._WIDGET_PAD
     hl_value_font = vendored_font(bold=True, size=day_view._FONT_HL_VALUE)
-    row_y = weather_top + pad + line_height(hl_value_font) + pad
     label_font_bold = vendored_font(bold=True, size=day_view._FONT_FORECAST_LABEL)
     label_font_regular = vendored_font(bold=False, size=day_view._FONT_FORECAST_LABEL)
     row_h = line_height(label_font_bold)
+
+    # Replicates _draw_weather_widget's own space-around placement (#191) for
+    # this single-forecast-point fixture, rather than the old fixed-gap
+    # formula — the single row sits roughly centered in the leftover height,
+    # not packed immediately below H/L.
+    hl_bottom = weather_top + pad + line_height(hl_value_font)
+    full_row_h = row_h + 2 + day_view._FORECAST_ICON_SIZE
+    weather_bottom = RESOLUTION[1] - MARGIN
+    available = (weather_bottom - pad) - hl_bottom
+    gap = max(available - full_row_h, 0) / 2
+    row_y = round(hl_bottom + gap)
 
     inner_lo, inner_hi = widget_left + 5, widget_right - 5
     px = image.load()
