@@ -344,6 +344,7 @@ Required label set — every issue must have exactly one label from each group:
 - Conventional commit style: `<type>(<scope>): <description>`
 - Common types: `feat`, `fix`, `test`, `docs`, `ci`, `refactor`, `chore`
 - Always include `Closes #<issue-number>` in the commit body when closing an issue
+- Always include `Closes #<issue-number>` in the **pull request description** as well, for any PR that closes an issue. This is not redundant with the commit body: GitHub's native closing-keyword auto-close only fires on merge into the repo's *default branch*, so on a repo where feature work merges into a non-default integration branch (e.g. `develop`) before reaching `main`, a workflow step is typically what actually closes the issue — and such a workflow commonly reads the PR description, not the commit message, to find the issue number. A `Closes #N` that only appears in a commit message will show up in the issue's timeline as a reference, not a close.
 - Always include co-author attribution:
   ```
   Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
