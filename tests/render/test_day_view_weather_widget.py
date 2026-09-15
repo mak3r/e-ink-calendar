@@ -79,7 +79,18 @@ def test_two_word_moon_phase_wraps_onto_two_lines():
     widget_left, widget_right = _widget_bounds(width)
     moon_top = MARGIN + day_view._WIDGET_DAWN_DUSK_H + day_view._WIDGET_V_GAP
     moon_bottom = moon_top + day_view._WIDGET_MOON_H
-    text_x0 = widget_left + day_view._WIDGET_PAD + day_view._ICON_SIZE + day_view._WIDGET_PAD
+    # Since #219 the icon is offset right by _MOON_ICON_OFFSET_X and grown
+    # to the wider _ICON_SIZE, and the phase text centers itself in the
+    # space to the icon's right rather than hugging it -- text_x0 only
+    # needs to bound that space from the icon's (now-shifted) right edge,
+    # since the scan below just looks for ink anywhere across the range.
+    # +1: the icon's own circle outline touches its computed right edge at
+    # icon_right itself, so starting the scan exactly there would pick up
+    # that ink and bridge the gap between the two wrapped text lines.
+    icon_right = (
+        widget_left + day_view._WIDGET_PAD + day_view._MOON_ICON_OFFSET_X + day_view._ICON_SIZE
+    )
+    text_x0 = icon_right + 1
     text_x1 = widget_right - day_view._WIDGET_PAD
     # Trim a few rows off each end to avoid the rounded-corner border curve.
     text_y0, text_y1 = moon_top + 15, moon_bottom - 15

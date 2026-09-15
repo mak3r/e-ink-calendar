@@ -116,10 +116,17 @@ def test_sunset_triangle_straddles_the_horizon():
 def _render_single_cloud_icon():
     """Render a single "cloudy" forecast point and return (image, icon_x,
     icon_y, size) for its condition icon, computed the same way
-    ``_draw_weather_widget`` positions it."""
+    ``_draw_weather_widget`` positions it.
+
+    Since #219, the forecast row's icon+temp group centers itself within
+    the widget's inner width (independent of the still-left-anchored
+    label), so ``icon_x`` must be derived from that centering formula
+    rather than assumed to sit flush at ``widget_left + pad``.
+    """
     width, height = RESOLUTION
     column_right = MARGIN + round((width - 2 * MARGIN) * day_view._COLUMN_FRACTION)
     widget_left = column_right + day_view._WIDGET_GAP
+    widget_right = width - MARGIN
     weather_top = (
         MARGIN
         + day_view._WIDGET_DAWN_DUSK_H
@@ -139,7 +146,12 @@ def _render_single_cloud_icon():
     gap = max(available - row_h, 0) / 2
     row_y = round(hl_bottom + gap)
     icon_y = row_y + label_line_h + 2
-    icon_x = widget_left + pad
+
+    temp_str = f"{round(60.0)}°"
+    temp_font = vendored_font(bold=True, size=day_view._FONT_FORECAST_TEMP)
+    available_w = (widget_right - pad) - (widget_left + pad)
+    icon_temp_w = size + pad + text_size(temp_str, font=temp_font)[0]
+    icon_x = widget_left + pad + max((available_w - icon_temp_w) // 2, 0)
 
     reading = WeatherReading(
         temp_f=60.0,

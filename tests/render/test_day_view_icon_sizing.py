@@ -16,6 +16,13 @@ HANDOFF) instead made the icon a fixed constant, independent of the time
 text's width, for the documented reason that 1:1 text-matching breaks down
 once the time font is genuinely maximized. This file tests what's
 actually merged.
+
+#219 added a cap (``_FONT_TIME_VALUE_MAX``) on the fits-to-width time
+font's growth, a scale/offset pair (``_DAWN_DUSK_ARROW_SCALE``,
+``_DAWN_DUSK_ARROW_OFFSET_Y``) on the rising/setting triangle, and an
+``_MOON_ICON_OFFSET_X`` nudge on the moon icon -- ``_dawn_dusk_layout``
+below and the triangle/moon-icon assertions are updated to replicate
+those, rather than the pre-#219 formulas.
 """
 
 from __future__ import annotations
@@ -51,7 +58,7 @@ def _dawn_dusk_layout(width: int) -> tuple[int, int, int, float, float, int]:
 
     available_w = half_w - 2 * day_view._WIDGET_PAD
     time_size = day_view._FONT_TIME_VALUE
-    while True:
+    while time_size < day_view._FONT_TIME_VALUE_MAX:
         candidate = vendored_font(bold=True, size=time_size + 1)
         widest = max(
             text_size(_SUNRISE.strftime("%H:%M"), font=candidate)[0],
@@ -92,12 +99,15 @@ def _render(width: int):
     return day_view.render([], _SUNRISE.date(), (width, 480), weather=snapshot)
 
 
-def test_time_font_fits_to_width_and_is_maximal_on_a_wide_panel():
+def test_time_font_grows_to_the_cap_on_a_wide_panel():
+    """On a panel this wide, the old fits-to-width loop would keep growing
+    past the size that used to cap it -- #219's ``_FONT_TIME_VALUE_MAX``
+    stops it there instead, even though a still-larger size would render
+    within the available width."""
     _widget_left, half_w, _icon_size, _icon_top, _horizon_y, time_size = _dawn_dusk_layout(_WIDE_WIDTH)
-    assert time_size > day_view._FONT_TIME_VALUE, (
-        "fixture didn't actually give the font room to grow past the old "
-        "fixed starting size -- test no longer exercises the case it's "
-        "meant to guard"
+    assert time_size == day_view._FONT_TIME_VALUE_MAX, (
+        f"expected growth to stop at _FONT_TIME_VALUE_MAX "
+        f"({day_view._FONT_TIME_VALUE_MAX}pt), got {time_size}pt"
     )
 
     available_w = half_w - 2 * day_view._WIDGET_PAD
@@ -108,11 +118,16 @@ def test_time_font_fits_to_width_and_is_maximal_on_a_wide_panel():
         f"{available_w}px available"
     )
 
+    # Confirm the cap is actually binding on this fixture -- i.e. without
+    # it, growth would have continued past the max, so this result isn't
+    # just incidentally the same as the old fits-to-width limit.
     one_bigger = vendored_font(bold=True, size=time_size + 1)
     bigger_w = text_size(_SUNRISE.strftime("%H:%M"), font=one_bigger)[0]
-    assert bigger_w > available_w, (
-        f"{time_size}pt isn't actually the largest fitting size -- "
-        f"{time_size + 1}pt ({bigger_w}px) would still fit in {available_w}px"
+    assert bigger_w <= available_w, (
+        "fixture doesn't actually exercise the cap -- the next size up "
+        f"({time_size + 1}pt, {bigger_w}px) wouldn't fit in {available_w}px "
+        "anyway, so this result would be the same with or without "
+        "_FONT_TIME_VALUE_MAX"
     )
 
 
@@ -176,17 +191,20 @@ def test_columns_are_centered_within_their_half_width_not_left_aligned():
 
 
 def test_triangle_is_shrunk_relative_to_the_dome():
-    """#209 shrunk ``tri_half_w`` from ``size * 0.26`` to ``size * 0.19`` --
-    the triangle's base (its widest row) must measure close to
-    ``2 * size * 0.19``, not the old, wider proportion."""
+    """#209 shrunk ``tri_half_w`` from ``size * 0.26`` to ``size * 0.19``;
+    #219 further scales it by ``_DAWN_DUSK_ARROW_SCALE`` (0.75) and shifts
+    its vertical center by ``_DAWN_DUSK_ARROW_OFFSET_Y`` -- the triangle's
+    base (its widest row) must measure close to
+    ``2 * size * 0.19 * _DAWN_DUSK_ARROW_SCALE``, not the old, wider
+    proportion."""
     width = _WIDE_WIDTH
     widget_left, half_w, icon_size, _icon_top, horizon_y, _time_size = _dawn_dusk_layout(width)
     image = _render(width)
     px = image.load()
 
     cx_sunrise = widget_left + half_w / 2
-    tri_half_w = icon_size * 0.19
-    band_center = horizon_y + icon_size * 0.015
+    tri_half_w = icon_size * 0.19 * day_view._DAWN_DUSK_ARROW_SCALE
+    band_center = horizon_y + icon_size * 0.015 + day_view._DAWN_DUSK_ARROW_OFFSET_Y
     band_bottom = band_center + tri_half_w  # sunrise (rising) triangle's base row
 
     # int(), not round() -- the base row is the triangle's LAST ink row, so
@@ -213,13 +231,14 @@ def test_triangle_is_shrunk_relative_to_the_dome():
 
 def test_moon_icon_size_stays_fixed_regardless_of_dawn_dusk_icon_size():
     """The moon icon is unrelated to the dawn/dusk widget's own sizing and
-    must stay keyed to the fixed ``_ICON_SIZE`` directly."""
+    must stay keyed to the fixed ``_ICON_SIZE`` directly (at its
+    ``_MOON_ICON_OFFSET_X``-nudged x position, per #219)."""
     width = _WIDE_WIDTH
     widget_left, _half_w, _icon_size, _icon_top, _horizon_y, _time_size = _dawn_dusk_layout(width)
     image = _render(width)
 
     moon_top = MARGIN + day_view._WIDGET_DAWN_DUSK_H + day_view._WIDGET_V_GAP
-    moon_icon_x0 = widget_left + day_view._WIDGET_PAD
+    moon_icon_x0 = widget_left + day_view._WIDGET_PAD + day_view._MOON_ICON_OFFSET_X
     moon_icon_y0 = moon_top + (day_view._WIDGET_MOON_H - day_view._ICON_SIZE) // 2
     mid_y = moon_icon_y0 + day_view._ICON_SIZE // 2
 
