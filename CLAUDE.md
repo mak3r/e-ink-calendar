@@ -353,3 +353,4 @@ Required label set — every issue must have exactly one label from each group:
   ```
 - Never reference a commit SHA in an issue comment without first verifying it with `git rev-parse --verify <sha>`
 - Post real command output in issue comments — never fabricate or paraphrase output
+- When building any `git`/`gh` command whose text will contain backtick-quoted markdown (e.g. `` `make test` `` in an issue body or commit message), construct it with a single-quoted heredoc (`<<'EOF' ... EOF`) or write it to a file and pass `--body-file`/`--field field=@file` — never as a bare double-quoted shell string. Bash treats backticks as command substitution even inside double quotes, so unescaped backticks in an inline string execute as real commands instead of rendering as literal text.
