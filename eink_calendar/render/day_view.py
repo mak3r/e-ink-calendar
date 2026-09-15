@@ -75,8 +75,12 @@ _WIDGET_MOON_H = 76
 _FONT_WIDGET_LABEL = 13
 _FONT_WIDGET_TITLE = 15
 _FONT_TIME_VALUE = 14  # starting point _draw_dawn_dusk_widget grows from to fill the available width (#209)
-_ICON_SIZE = 28  # moon phase icon
+_FONT_TIME_VALUE_MAX = 20  # ceiling on that growth; lower this to size the time text directly
+_ICON_SIZE = 44  # moon phase icon
+_MOON_ICON_OFFSET_X = 10  # nudges the icon right of its padding-only position
 _DAWN_DUSK_ICON_SIZE = 56  # sun icon: a fixed constant, independent of the time text's width (#209)
+_DAWN_DUSK_ARROW_SCALE = 0.75  # scales the rising/setting triangle, both icons together
+_DAWN_DUSK_ARROW_OFFSET_Y = 2  # raises (negative) / lowers (positive) that triangle, both icons together
 
 # Weather widget: H/L at the top (larger than other widget labels), then
 # each forecast period as a stacked row (label line, then icon + temp).
@@ -85,6 +89,7 @@ _FONT_HL_VALUE = 22
 _FONT_FORECAST_LABEL = 14
 _FONT_FORECAST_TEMP = 26
 _FORECAST_ICON_SIZE = 36
+_FORECAST_OFFSET_X = 16  # shifts the label/icon/temp column right, as one unit
 
 # astral's 8 named phases -> fraction of the disk illuminated (0=new, 1=full).
 _MOON_LIT_FRACTION = {
@@ -532,7 +537,7 @@ def _draw_dawn_dusk_widget(
     # picked the fixed starting size this now grows from).
     available_w = half_w - 2 * _WIDGET_PAD
     time_size = _FONT_TIME_VALUE
-    while True:
+    while time_size < _FONT_TIME_VALUE_MAX:
         candidate = vendored_font(bold=True, size=time_size + 1)
         widest = max(
             text_size(weather.sunrise.strftime("%H:%M"), font=candidate)[0],
@@ -596,19 +601,23 @@ def _draw_moon_widget(
     draw.rounded_rectangle(
         box, radius=_WIDGET_CORNER_RADIUS, outline=color("black"), width=_WIDGET_BORDER_W
     )
+    icon_x = x0 + _WIDGET_PAD + _MOON_ICON_OFFSET_X
     icon_y = y0 + (y1 - y0 - _ICON_SIZE) // 2
-    _draw_moon_icon(image, draw, x0 + _WIDGET_PAD, icon_y, weather.moon_phase)
+    _draw_moon_icon(image, draw, icon_x, icon_y, weather.moon_phase)
 
     # A two-word phase name like "Waxing Crescent" doesn't fit this narrow
     # widget on one line (#178 requirement 2) — wrap it the same way event
-    # summaries wrap, sized to the space left after the icon.
-    text_x = x0 + _WIDGET_PAD + _ICON_SIZE + _WIDGET_PAD
-    max_text_w = max(x1 - _WIDGET_PAD - text_x, 1)
-    lines = wrap_text(weather.moon_phase, max_text_w, font=title_font) or [weather.moon_phase]
+    # summaries wrap, then center the wrapped block in the space between the
+    # icon's right edge and the widget's right inner edge.
+    icon_right = icon_x + _ICON_SIZE
+    available_w = max(x1 - _WIDGET_PAD - icon_right, 1)
+    lines = wrap_text(weather.moon_phase, available_w, font=title_font) or [weather.moon_phase]
     line_h = line_height(title_font)
     text_y = y0 + (y1 - y0 - line_h * len(lines)) // 2
     for i, line in enumerate(lines):
-        draw_text(image, (text_x, text_y + i * line_h), line, fill="black", font=title_font)
+        line_w = text_size(line, font=title_font)[0]
+        line_x = icon_right + (available_w - line_w) // 2
+        draw_text(image, (line_x, text_y + i * line_h), line, fill="black", font=title_font)
 
 
 def _draw_weather_widget(
@@ -624,7 +633,7 @@ def _draw_weather_widget(
     rows are space-around distributed across whatever height is left below
     H/L, rather than packed with a fixed gap, so a light forecast doesn't
     leave the bottom of the widget empty (#191)."""
-    x0, y0, _x1, y1 = box
+    x0, y0, x1, y1 = box
     draw.rounded_rectangle(
         box, radius=_WIDGET_CORNER_RADIUS, outline=color("black"), width=_WIDGET_BORDER_W
     )
@@ -634,13 +643,21 @@ def _draw_weather_widget(
 
     hl_top = y0 + pad
     hl_text_y = hl_top + (line_height(hl_value_font) - line_height(hl_label_font)) // 2
-    hx = x0 + pad
-    for prefix, temp in (("H:", reading.high_f), ("L:", reading.low_f)):
+    hl_segment_gap = 14
+    hl_parts = [("H:", reading.high_f), ("L:", reading.low_f)]
+    hl_widths = [
+        text_size(prefix, font=hl_label_font)[0] + 3 + text_size(f"{round(temp)}°", font=hl_value_font)[0]
+        for prefix, temp in hl_parts
+    ]
+    hl_total_w = sum(hl_widths) + hl_segment_gap * (len(hl_parts) - 1)
+    available_w = x1 - pad - (x0 + pad)
+    hx = x0 + pad + max((available_w - hl_total_w) // 2, 0)
+    for prefix, temp in hl_parts:
         draw_text(image, (hx, hl_text_y), prefix, fill="black", font=hl_label_font)
         hx += text_size(prefix, font=hl_label_font)[0] + 3
         value = f"{round(temp)}°"
         draw_text(image, (hx, hl_top), value, fill="black", font=hl_value_font)
-        hx += text_size(value, font=hl_value_font)[0] + 14
+        hx += text_size(value, font=hl_value_font)[0] + hl_segment_gap
 
     if not reading.forecast:
         return
@@ -661,14 +678,21 @@ def _draw_weather_widget(
     slack = max(available - row_h * n, 0)
     gap = slack / (n + 1)
 
+    forecast_x0 = x0 + pad + _FORECAST_OFFSET_X
     row_y = hl_bottom + gap
     for point in reading.forecast:
-        draw_text(image, (x0 + pad, round(row_y)), point.label, fill="black", font=forecast_label_font)
+        draw_text(image, (forecast_x0, round(row_y)), point.label, fill="black", font=forecast_label_font)
         icon_y = round(row_y) + label_line_h + 2
-        _draw_condition_icon(draw, x0 + pad, icon_y, point.condition, size=_FORECAST_ICON_SIZE)
 
+        # Icon + temp move as their own centered group (independent of the
+        # label, which stays put) — each row's temp text width can differ,
+        # so this is computed per row rather than shared.
         temp_str = f"{round(point.temp_f)}°"
-        temp_x = x0 + pad + _FORECAST_ICON_SIZE + pad
+        icon_temp_w = _FORECAST_ICON_SIZE + pad + text_size(temp_str, font=forecast_temp_font)[0]
+        icon_x = x0 + pad + max((available_w - icon_temp_w) // 2, 0)
+        _draw_condition_icon(draw, icon_x, icon_y, point.condition, size=_FORECAST_ICON_SIZE)
+
+        temp_x = icon_x + _FORECAST_ICON_SIZE + pad
         temp_y = icon_y + (_FORECAST_ICON_SIZE - line_height(forecast_temp_font)) // 2
         draw_text(image, (temp_x, temp_y), temp_str, fill="black", font=forecast_temp_font)
 
@@ -715,9 +739,11 @@ def _draw_sun_icon(draw: ImageDraw.ImageDraw, x: float, y: float, size: float, *
     # A fixed, proportionate size, straddling the horizon rather than
     # confined to the band below it (#197 requirement 1; #185 requirement 1
     # established the fixed-proportion part of this; #209 shrunk it
-    # relative to the dome).
-    tri_half_w = size * 0.19  # was 0.26 -- shrunk per #209
-    band_center = horizon_y + size * 0.015
+    # relative to the dome). _DAWN_DUSK_ARROW_SCALE/_OFFSET_Y apply here only,
+    # so both the sunrise and sunset arrow (this same function, called once
+    # per direction) always move together.
+    tri_half_w = size * 0.19 * _DAWN_DUSK_ARROW_SCALE  # was 0.26 -- shrunk per #209
+    band_center = horizon_y + size * 0.015 + _DAWN_DUSK_ARROW_OFFSET_Y
     band_top = band_center - tri_half_w
     band_bottom = band_center + tri_half_w
     apex_y, base_y = (band_top, band_bottom) if rising else (band_bottom, band_top)

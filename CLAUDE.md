@@ -161,7 +161,9 @@ The merge manager is a gatekeeper, not a coder. When reviewing a PR it:
 1. Runs `make test` — if it fails, creates a GitHub issue labeled `persona/<owner>` and `type/bug`, comments on the PR with the issue link, and does NOT merge
 2. Checks for open `type/security` issues on the branch — if any exist, blocks merge and creates a blocking issue
 3. Runs `make quality` — if it fails, creates a blocking issue for the responsible persona
-4. If CI is green and no blockers exist, merges the PR to `develop` with `gh pr merge <n> --merge --delete-branch`
+4. If CI is green and no blockers exist, merges the PR to `develop`:
+   - For `feature/developer/*` branches (ephemeral, one per feature): `gh pr merge <n> --merge --delete-branch`
+   - For `persona/*` branches (persistent for the life of the project per [Worktree Setup](#worktree-setup-required-before-starting-work)): `gh pr merge <n> --merge` — **never** pass `--delete-branch`; the persona's worktree tracks that branch and deleting it strands the worktree
 5. Never edits source files, never force-pushes, never resolves conflicts directly
 
 When conflicts exist, the merge manager creates an issue assigned to both responsible personas and waits for resolution.
@@ -344,6 +346,7 @@ Required label set — every issue must have exactly one label from each group:
 - Conventional commit style: `<type>(<scope>): <description>`
 - Common types: `feat`, `fix`, `test`, `docs`, `ci`, `refactor`, `chore`
 - Always include `Closes #<issue-number>` in the commit body when closing an issue
+- Always include `Closes #<issue-number>` in the **pull request description** as well, for any PR that closes an issue. This is not redundant with the commit body: GitHub's native closing-keyword auto-close only fires on merge into the repo's *default branch*, so on a repo where feature work merges into a non-default integration branch (e.g. `develop`) before reaching `main`, a workflow step is typically what actually closes the issue — and such a workflow commonly reads the PR description, not the commit message, to find the issue number. A `Closes #N` that only appears in a commit message will show up in the issue's timeline as a reference, not a close.
 - Always include co-author attribution:
   ```
   Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
