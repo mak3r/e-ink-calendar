@@ -161,7 +161,9 @@ The merge manager is a gatekeeper, not a coder. When reviewing a PR it:
 1. Runs `make test` — if it fails, creates a GitHub issue labeled `persona/<owner>` and `type/bug`, comments on the PR with the issue link, and does NOT merge
 2. Checks for open `type/security` issues on the branch — if any exist, blocks merge and creates a blocking issue
 3. Runs `make quality` — if it fails, creates a blocking issue for the responsible persona
-4. If CI is green and no blockers exist, merges the PR to `develop` with `gh pr merge <n> --merge --delete-branch`
+4. If CI is green and no blockers exist, merges the PR to `develop`:
+   - For `feature/developer/*` branches (ephemeral, one per feature): `gh pr merge <n> --merge --delete-branch`
+   - For `persona/*` branches (persistent for the life of the project per [Worktree Setup](#worktree-setup-required-before-starting-work)): `gh pr merge <n> --merge` — **never** pass `--delete-branch`; the persona's worktree tracks that branch and deleting it strands the worktree
 5. Never edits source files, never force-pushes, never resolves conflicts directly
 
 When conflicts exist, the merge manager creates an issue assigned to both responsible personas and waits for resolution.
