@@ -19,9 +19,34 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_BODY: ${{ github.event.pull_request.body }}
           REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          echo "$PR_BODY" | grep -oiE '(closes|fixes|resolves) #[0-9]+' | grep -oE '[0-9]+' | while read num; do
-            echo "Closing issue #$num"
-            gh issue close "$num" --repo "$REPO" \
-              --comment "Closed automatically: fixed by PR #${{ github.event.pull_request.number }} merged to develop." || true
+          matches=$(echo "$PR_BODY" | grep -oiE '(closes|fixes|resolves) #[0-9]+' | grep -oE '[0-9]+' || true)
+
+          if [ -z "$matches" ]; then
+            echo "No \`Closes/Fixes/Resolves #N\` found in PR #${PR_NUMBER}'s body - no issues closed." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### Issues closed by PR #${PR_NUMBER}" >> "$GITHUB_STEP_SUMMARY"
+            echo "$matches" | while read -r num; do
+              [ -z "$num" ] && continue
+              echo "Closing issue #$num"
+              echo "- #$num" >> "$GITHUB_STEP_SUMMARY"
+              gh issue close "$num" --repo "$REPO" \
+                --comment "Closed automatically: fixed by PR #${PR_NUMBER} merged to develop." || true
+            done
+          fi
+
+          # Flag any bare #N reference that has no recognized closing keyword next to
+          # it - usually a typo'd issue number or keyword (e.g. "Closes #21" vs "#214").
+          all_refs=$(echo "$PR_BODY" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | sort -u || true)
+          orphaned=""
+          for ref in $all_refs; do
+            if ! echo "$matches" | grep -qx "$ref"; then
+              orphaned="$orphaned #$ref"
+            fi
           done
+          if [ -n "$orphaned" ]; then
+            echo "::warning::PR #${PR_NUMBER} body references${orphaned} without a recognized closing keyword (Closes/Fixes/Resolves) - check for a typo in the issue number or keyword."
+            echo "### ⚠️ Unclosed references in PR #${PR_NUMBER}" >> "$GITHUB_STEP_SUMMARY"
+            echo "Found${orphaned} with no recognized closing keyword nearby - check for a typo." >> "$GITHUB_STEP_SUMMARY"
+          fi
